@@ -1,0 +1,6 @@
+config.json
+club.db
+*.db
+__pycache__/
+backup/
+.venv/

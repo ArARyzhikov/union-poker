@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Union Poker — касса турнира</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Forum&family=Manrope:wght@500;600;700;800&display=swap">
+<link rel="stylesheet" href="union-poker-ui.css">
+<style>
+  html,body{background:var(--up-bg);margin:0;}
+  body{font-family:var(--up-font-ui);color:var(--up-ink);
+       padding:env(safe-area-inset-top) 0 calc(86px + env(safe-area-inset-bottom,0px));}
+  .wrap{max-width:560px;margin:0 auto;padding:0 14px;}
+  .up-logo{background-image:url(logo.png);}
+  .cash{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
+        border-radius:20px;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+  .cash b{display:block;font:400 32px/1 var(--up-font-display);color:var(--up-gold-text);margin-top:6px;}
+  .cash .det{text-align:right;font:600 13px/1.6 var(--up-font-ui);color:var(--up-muted);}
+  .pl{background:var(--up-surface);border:1.5px solid var(--up-line);border-radius:18px;padding:12px 14px;margin-bottom:10px;}
+  .pl.out{opacity:.45;}
+  .pl .hd{display:flex;align-items:center;gap:10px;}
+  .pl .nm{flex:1;min-width:0;font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pl .sub{color:var(--up-muted);font-size:12.5px;font-weight:600;margin-top:4px;}
+  .btns{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:11px;}
+  .btns button{padding:11px 2px;font-size:13px;border-radius:12px;}
+  .b-in{background:var(--up-ok-bg);color:var(--up-ok);border-color:rgba(111,217,162,.3);}
+  .b-out{background:var(--up-bad-bg);color:var(--up-bad);border-color:rgba(224,104,122,.3);}
+  .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(10,9,7,.96);border-top:1px solid var(--up-line);
+       padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));backdrop-filter:blur(8px);}
+  .bar .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--up-ok);box-shadow:0 0 8px var(--up-ok);}
+  .dot.bad{background:var(--up-bad);box-shadow:0 0 8px var(--up-bad);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="up-header">
+    <div class="up-logo"></div>
+    <div><div style="font:400 20px/1 var(--up-font-display)" id="tname">Касса турнира</div>
+         <div class="up-muted" style="font-size:12px;margin-top:4px" id="tdate">—</div></div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <span class="dot" id="conn"></span>
+      <button class="up-btn up-btn--sm" id="btnKey">Ключ</button>
+    </div>
+  </div>
+
+  <div class="cash">
+    <div><span class="up-label">Выручка за вечер</span><b id="total">0 ₽</b></div>
+    <div class="det" id="money">—</div>
+  </div>
+
+  <div class="up-grid-4" style="margin-bottom:12px">
+    <div class="up-tile"><b id="s_alive">0</b><small>В ИГРЕ</small></div>
+    <div class="up-tile"><b id="s_in">0</b><small>ВХОДОВ</small></div>
+    <div class="up-tile"><b id="s_re">0</b><small>РЕ-ЭНТРИ</small></div>
+    <div class="up-tile"><b id="s_ad">0</b><small>АДДОНОВ</small></div>
+  </div>
+
+  <input class="up-input" id="q" type="search" placeholder="Поиск по фамилии" autocomplete="off" style="margin-bottom:12px">
+  <div id="list"></div>
+</div>
+
+<div class="bar"><div class="in">
+  <button class="up-btn up-btn--gold" id="btnAdd">+ Игрок</button>
+  <button class="up-btn" id="btnRefresh">Обновить</button>
+  <button class="up-btn" id="btnFinish">Завершить</button>
+</div></div>
+
+<div class="up-sheet" id="sheet"><div class="up-sheet__box">
+  <div class="up-sheet__grab"></div>
+  <h2 class="up-h2" id="sheetTitle">Заголовок</h2>
+  <p class="up-muted" id="sheetText" style="font-size:14px;margin:6px 0 14px"></p>
+  <div class="up-field"><input class="up-input" id="sheetInput" type="text"></div>
+  <div style="display:flex;gap:10px">
+    <button class="up-btn up-btn--ghost" style="flex:1" id="sheetCancel">Отмена</button>
+    <button class="up-btn up-btn--gold" style="flex:1" id="sheetOk">Готово</button>
+  </div>
+</div></div>
+
+<div class="up-toast" id="toast"></div>
+
+<script>
+/* =========================================================
+   Касса турнира. Все данные живут на сервере, не в браузере:
+   можно открыть с двух телефонов, цифры совпадут.
+   ========================================================= */
+const API = '/api/admin';
+let KEY = '';
+try { KEY = localStorage.getItem('up_admin_key') || ''; } catch(e) {}
+let STATE = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+const fmt = n => String(Math.round(n||0)).replace(/\B(?=(\d{3})+(?!\d))/g,' ');
+
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('up-toast--on');
+  clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('up-toast--on'), 1700);
+}
+
+/* ---------- окно вопроса ---------- */
+function ask(title, text, value){
+  return new Promise(resolve => {
+    $('sheetTitle').textContent = title;
+    $('sheetText').textContent = text || '';
+    $('sheetInput').value = value || '';
+    $('sheetInput').style.display = value === null ? 'none' : 'block';
+    $('sheet').classList.add('up-sheet--open');
+    setTimeout(()=>$('sheetInput').focus(), 80);
+    const done = v => { $('sheet').classList.remove('up-sheet--open'); resolve(v); };
+    $('sheetOk').onclick = () => done($('sheetInput').value.trim());
+    $('sheetCancel').onclick = () => done(null);
+  });
+}
+
+/* ---------- запросы ---------- */
+async function get(path){
+  const r = await fetch(API + path + '?key=' + encodeURIComponent(KEY));
+  if (r.status === 403) throw new Error('Неверный ключ');
+  return await r.json();
+}
+async function post(path, body){
+  const r = await fetch(API + path + '?key=' + encodeURIComponent(KEY), {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})
+  });
+  return await r.json();
+}
+
+/* ---------- отрисовка ---------- */
+function render(){
+  if (!STATE) return;
+  const t = STATE.tournament, m = STATE.money || {};
+  $('tname').textContent = t.title || 'Касса турнира';
+  $('tdate').textContent = (t.weekday ? t.weekday + ', ' : '') + (t.date || '') + ' · ' + (t.time || '');
+  $('total').textContent = fmt(STATE.total) + ' ₽';
+  $('money').innerHTML =
+    'входы ' + fmt((m.buyin||{}).sum) + ' ₽<br>' +
+    'ре-энтри ' + fmt((m.reentry||{}).sum) + ' ₽<br>' +
+    'аддоны ' + fmt((m.addon||{}).sum) + ' ₽';
+  $('s_alive').textContent = STATE.alive;
+  $('s_in').textContent = (m.buyin||{}).n || 0;
+  $('s_re').textContent = (m.reentry||{}).n || 0;
+  $('s_ad').textContent = (m.addon||{}).n || 0;
+
+  const query = ($('q').value || '').toLowerCase().trim();
+  const list = STATE.players.filter(p => !query || p.name.toLowerCase().includes(query));
+  const box = $('list');
+  if (!STATE.players.length) { box.innerHTML = '<div class="up-empty">Пока никто не записан.<br>Игроки появятся, когда запишутся в боте.</div>'; return; }
+  if (!list.length) { box.innerHTML = '<div class="up-empty">Никого не найдено</div>'; return; }
+
+  box.innerHTML = list.map(p => {
+    const tag = p.busted ? '<span class="up-chip up-chip--bad">' + (p.place ? p.place + ' место' : 'выбыл') + '</span>'
+              : p.arrived ? '<span class="up-chip up-chip--ok">в игре</span>'
+                          : '<span class="up-chip">не оплатил</span>';
+    const extra = [];
+    if (p.reentry) extra.push('ре-энтри ×' + p.reentry);
+    if (p.addon)   extra.push('аддон ×' + p.addon);
+    return '<div class="pl' + (p.busted ? ' out' : '') + '">' +
+      '<div class="hd"><div class="nm">' + esc(p.name) + '</div>' + tag + '</div>' +
+      '<div class="sub">№ ' + p.number + (extra.length ? ' · ' + extra.join(' · ') : '') + '</div>' +
+      '<div class="btns">' +
+        '<button class="up-btn b-in" data-op="buyin" data-id="' + p.id + '">Вход</button>' +
+        '<button class="up-btn" data-op="reentry" data-id="' + p.id + '">Ре-энтри</button>' +
+        '<button class="up-btn" data-op="addon" data-id="' + p.id + '">Аддон</button>' +
+        '<button class="up-btn b-out" data-op="bust" data-id="' + p.id + '">Выбыл</button>' +
+      '</div></div>';
+  }).join('');
+}
+
+/* ---------- загрузка ---------- */
+async function refresh(silent){
+  try{
+    STATE = await get('/state');
+    $('conn').classList.remove('bad');
+    render();
+  }catch(e){
+    $('conn').classList.add('bad');
+    if (!silent) toast(e.message === 'Неверный ключ' ? 'Неверный ключ доступа' : 'Нет связи с сервером');
+  }
+}
+
+/* ---------- действия ---------- */
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-op]');
+  if (!b) return;
+  b.disabled = true;
+  const res = await post('/op', { player_id: +b.dataset.id, op: b.dataset.op });
+  b.disabled = false;
+  toast(res.message || 'Готово');
+  refresh(true);
+});
+
+$('q').addEventListener('input', render);
+$('btnRefresh').onclick = () => refresh();
+
+$('btnKey').onclick = async () => {
+  const v = await ask('Ключ доступа', 'Тот же ключ, что в config.json на сервере.', KEY);
+  if (v === null) return;
+  KEY = v; try { localStorage.setItem('up_admin_key', KEY); } catch(e) {}
+  refresh();
+};
+
+$('btnAdd').onclick = async () => {
+  const name = await ask('Новый игрок', 'Фамилия и имя. Игрок сразу попадёт в список турнира.', '');
+  if (!name) return;
+  const res = await post('/add-player', { name });
+  toast(res.message || 'Добавлен');
+  refresh(true);
+};
+
+$('btnFinish').onclick = async () => {
+  const v = await ask('Завершить турнир?', 'Последнему игроку присвоится 1 место, всем начислятся очки рейтинга. Отменить будет нельзя. Напишите СТОП для отмены или ДА для подтверждения.', 'ДА');
+  if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
+  const res = await post('/finish', {});
+  toast(res.message || 'Готово');
+  refresh(true);
+};
+
+/* ---------- старт ---------- */
+(async function(){
+  if (!KEY) {
+    const v = await ask('Ключ доступа', 'Введите ключ из config.json, чтобы открыть кассу.', '');
+    if (v) { KEY = v; try { localStorage.setItem('up_admin_key', KEY); } catch(e) {} }
+  }
+  refresh();
+  setInterval(() => refresh(true), 5000);   // сами подтягиваем изменения
+})();
+</script>
+</body>
+</html>
