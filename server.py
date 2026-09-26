@@ -6,10 +6,12 @@ UNION POKER — сервер клуба.
 Один файл, только стандартная библиотека Python. Ничего устанавливать не нужно.
 Запуск:  python server.py
 
-Внутри три части, работающие одновременно:
+Внутри четыре части, работающие одновременно:
   1) База данных SQLite (файл club.db рядом со скриптом)
-  2) Telegram-бот: регистрация игроков и запись на турнир
+  2) Telegram-бот: регистрация игроков и запись на турниры
   3) Веб-сервер: отдаёт приложение, кассу и таймер + API для них
+  4) Часовой: достраивает афишу на две недели вперёд и открывает турнир
+     в кассе за 10 минут до старта
 
 Настройки лежат в config.json — он создаётся автоматически при первом запуске.
 """
@@ -23,9 +25,10 @@ import sqlite3
 import threading
 import time
 import traceback
+import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -39,28 +42,77 @@ PUBLIC = os.path.join(BASE, "public")
 
 DEFAULT_CFG = {
     "bot_token": "",                       # токен от @BotFather
+    "proxy": "",                           # если Telegram недоступен: "http://127.0.0.1:2080"
     "admins": [],                          # ваш Telegram ID (узнать: напишите боту /id)
     "admin_key": "union-admin-key",        # пароль для кассы, поменяйте на свой
     "app_url": "",                         # адрес Mini App, например https://club.ru/app.html
     "club": "Union Poker",
     "port": 8080,
     "dev": True,                           # True — можно открывать приложение в браузере без Telegram
+
+    # Каким по умолчанию получается турнир в афише
     "tournament": {
-        "id": 1,
-        "title": "Демо-день клуба",
-        "date": "27 сентября",
-        "weekday": "вс",
+        "title": "Вечерний турнир",
         "time": "18:00",
         "buyin": 2000,
         "reentry": 2000,
-        "addon": 3000,
+        "addon": 0,                        # 0 — аддона нет, кнопка в кассе скрыта
         "seats": 36,
         "stack": 25000,
-        "meta": "Hold'em · стек 25 000 · вход 2000 ₽"
+        "meta": "Hold'em · стек 25 000 · вход 2000 ₽",
+        "theme": ""
     },
+
+    # Расписание клуба: по этим дням сервер сам достраивает афишу вперёд.
+    # Поставьте "on": true, когда определитесь с постоянными днями игры.
+    "schedule": {
+        "on": False,
+        "days": ["пт", "сб", "вс"],
+        "time": "18:00",
+        "weeks_ahead": 2
+    },
+
+    # Разовые турниры, которых нет в расписании. Дата — в формате ГГГГ-ММ-ДД
+    "events": [
+        {"date": "2026-09-27", "time": "18:00", "title": "Демо-день клуба",
+         "meta": "Первый турнир клуба · стек 25 000"}
+    ],
+
     # очки за место: сколько получает 1-е, 2-е, 3-е и так далее
     "points": [100, 85, 72, 61, 52, 44, 38, 32, 27],
     "points_rest": 10,                     # всем остальным, кто играл
+    "seats_per_table": 9,
+    "final_at": 9,                         # при скольких игроках финальный стол
+
+    # Структура турнира: [малый блайнд, большой блайнд, анте] или "перерыв 10"
+    "structure": [
+        [100, 200, 200], [200, 400, 400], [300, 600, 600], [400, 800, 800], [500, 1000, 1000],
+        "перерыв 10",
+        [1000, 2000, 2000], [1500, 3000, 3000], [2000, 4000, 4000], [2500, 5000, 5000],
+        [4000, 8000, 8000],
+        "перерыв 10",
+        [5000, 10000, 10000], [10000, 20000, 20000], [20000, 40000, 40000],
+        [40000, 80000, 80000], [50000, 100000, 100000]
+    ],
+    "level_minutes": 10,
+    "late_levels": 10,                     # до конца какого уровня идут ре-энтри и поздняя запись
+    "cancel_before_min": 10,               # за сколько минут до старта закрывается отмена записи
+    "open_before_min": 10,                 # за сколько минут до старта турнир открывается в кассе
+
+    # Размен стартового стека: [сколько фишек, номинал]
+    "chips": [[25, 100], [5, 500], [10, 1000], [2, 5000]],
+
+    "rules": [
+        "Играть можно только после регистрации в боте клуба",
+        "Стартовый стек 25 000, уровни по 10 минут",
+        "Формат анте — большой блайнд (BB ante)",
+        "Ре-энтри и поздняя регистрация — до конца 10 уровня",
+        "После 10 уровня новых входов нет",
+        "Перерывы по 10 минут после 5 и после 10 уровня",
+        "Финальный стол собирается при 9 игроках",
+        "Призы клуба — очки рейтинга сезона",
+        "Телефоны за столом на беззвучном режиме"
+    ],
 }
 
 
@@ -71,12 +123,114 @@ def load_cfg():
         print("Создан config.json — впишите туда токен бота и запустите снова.")
     with open(CFG_PATH, encoding="utf-8") as f:
         cfg = json.load(f)
+
+    # Переход со старой версии: раньше в конфиге лежал один турнир и структура
+    # по 20 минут. Оставляем только личные настройки, остальное берём новое.
+    if "schedule" not in cfg:
+        keep = ("bot_token", "proxy", "admins", "admin_key", "app_url", "club", "port", "dev")
+        fresh = json.loads(json.dumps(DEFAULT_CFG))
+        for k in keep:
+            if k in cfg:
+                fresh[k] = cfg[k]
+        try:
+            os.replace(CFG_PATH, CFG_PATH + ".old")
+            with open(CFG_PATH, "w", encoding="utf-8") as f:
+                json.dump(fresh, f, ensure_ascii=False, indent=2)
+            print("config.json обновлён под новую афишу. Старый лежит рядом: config.json.old")
+        except Exception as e:
+            print("! Не получилось обновить config.json:", e)
+        cfg = fresh
+
     merged = dict(DEFAULT_CFG)
     merged.update(cfg)
+    # вложенные словари тоже дополняем значениями по умолчанию
+    for key in ("tournament", "schedule"):
+        d = dict(DEFAULT_CFG[key])
+        d.update(merged.get(key) or {})
+        merged[key] = d
     return merged
 
 
 CFG = load_cfg()
+
+# ----------------------------------------------------------------------------
+# ДАТЫ И ВРЕМЯ
+# ----------------------------------------------------------------------------
+
+MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня",
+          "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+WD_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+WD_FULL = ["понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье"]
+FMT = "%Y-%m-%d %H:%M"
+
+
+def now():
+    return datetime.now().replace(second=0, microsecond=0)
+
+
+def parse_dt(s):
+    """Строка '2026-10-04 18:00' → дата и время. Кривое значение не роняет сервер."""
+    if not s:
+        return None
+    s = str(s).strip()
+    try:
+        return datetime.strptime(s[:16], FMT)
+    except Exception:
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d")
+        except Exception:
+            return None
+
+
+def date_text(dt):
+    return f"{dt.day} {MONTHS[dt.month - 1]}"
+
+
+def weekday_text(dt):
+    return WD_SHORT[dt.weekday()]
+
+
+def tag_text(dt):
+    """Короткая метка для афиши: '4 окт · 18:00'."""
+    return f"{dt.day} {MONTHS[dt.month - 1][:3]} · {dt.strftime('%H:%M')}"
+
+
+def when_text(dt):
+    """Человеческое: 'сегодня в 18:00', 'завтра в 18:00', 'в субботу, 4 октября'."""
+    d = (dt.date() - now().date()).days
+    if d == 0:
+        return f"сегодня в {dt.strftime('%H:%M')}"
+    if d == 1:
+        return f"завтра в {dt.strftime('%H:%M')}"
+    if d < 0:
+        return f"{date_text(dt)} в {dt.strftime('%H:%M')}"
+    return f"в {WD_FULL[dt.weekday()]}, {date_text(dt)}, в {dt.strftime('%H:%M')}"
+
+
+def minutes_left(dt):
+    return int((dt - now()).total_seconds() // 60)
+
+
+def late_minutes():
+    """Сколько минут от старта идут ре-энтри и поздняя регистрация.
+
+    Считается по структуре: уровни до late_levels плюс перерывы внутри
+    этого отрезка. Для структуры клуба получается 110 минут.
+    """
+    limit = int(CFG.get("late_levels", 10))
+    per = int(CFG.get("level_minutes", 10))
+    total = levels = 0
+    for item in CFG.get("structure", []):
+        if isinstance(item, str):
+            m = re.search(r"\d+", item)
+            total += int(m.group()) if m else 0
+        else:
+            levels += 1
+            total += per
+            if levels >= limit:
+                break
+    return total
+
 
 # ----------------------------------------------------------------------------
 # БАЗА ДАННЫХ
@@ -119,7 +273,7 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS tournaments(
-            id        INTEGER PRIMARY KEY,
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
             title     TEXT,
             date      TEXT,
             status    TEXT DEFAULT 'open',   -- open | live | finished
@@ -148,6 +302,11 @@ def init_db():
             by_admin  INTEGER
         );
 
+        CREATE TABLE IF NOT EXISTS settings(
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS log(
             id     INTEGER PRIMARY KEY AUTOINCREMENT,
             ts     TEXT DEFAULT (datetime('now')),
@@ -157,10 +316,68 @@ def init_db():
         """)
         db.commit()
 
-    t = CFG["tournament"]
-    if not q("SELECT 1 FROM tournaments WHERE id=?", (t["id"],), one=True):
-        x("INSERT INTO tournaments(id, title, date) VALUES(?,?,?)",
-          (t["id"], t["title"], t["date"]))
+    # Мягкие миграции: добавляем недостающие колонки в уже существующие базы,
+    # чтобы обновление сервера не требовало удалять club.db
+    add_column("entries", "wait", "INTEGER DEFAULT 0")
+    add_column("entries", "table_no", "INTEGER DEFAULT 0")
+    add_column("entries", "seat_no", "INTEGER DEFAULT 0")
+    for col, decl in (("start", "TEXT"), ("time", "TEXT"), ("weekday", "TEXT"),
+                      ("buyin", "INTEGER DEFAULT 0"), ("reentry", "INTEGER DEFAULT 0"),
+                      ("addon", "INTEGER DEFAULT 0"), ("stack", "INTEGER DEFAULT 0"),
+                      ("seats", "INTEGER DEFAULT 36"), ("meta", "TEXT"), ("theme", "TEXT"),
+                      ("auto", "INTEGER DEFAULT 0")):
+        add_column("tournaments", col, decl)
+
+    fix_old_tournaments()
+    ensure_events()
+
+
+def add_column(table, column, decl):
+    """Добавляет колонку, если её ещё нет."""
+    cols = [r["name"] for r in q(f"PRAGMA table_info({table})")]
+    if column not in cols:
+        x(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+def setting(key, value=None):
+    """Прочитать или записать настройку, которая живёт в базе."""
+    if value is None:
+        row = q("SELECT value FROM settings WHERE key=?", (key,), one=True)
+        return row["value"] if row else None
+    x("INSERT INTO settings(key, value) VALUES(?,?) "
+      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+    return str(value)
+
+
+def fix_old_tournaments():
+    """Турнирам из старой версии, где дата была текстом, проставляет настоящую дату."""
+    for r in q("SELECT * FROM tournaments WHERE start IS NULL OR start=''"):
+        dt = None
+        txt = (r["date"] or "").strip().lower()
+        m = re.match(r"(\d{1,2})\s+([а-яё]+)", txt)
+        if m:
+            stem = m.group(2)[:4]
+            for i, name in enumerate(MONTHS, 1):
+                if name.startswith(stem):
+                    hh, mm = ((r["time"] or "18:00").split(":") + ["00"])[:2]
+                    try:
+                        dt = datetime(now().year, i, int(m.group(1)), int(hh), int(mm))
+                    except ValueError:
+                        dt = None
+                    break
+        if dt is None:
+            dt = now().replace(hour=18, minute=0)
+        x("UPDATE tournaments SET start=? WHERE id=?", (dt.strftime(FMT), r["id"]))
+    refresh_display()
+
+
+def refresh_display():
+    """Пересчитывает текстовые дату и день недели из настоящей даты."""
+    for r in q("SELECT id, start FROM tournaments"):
+        dt = parse_dt(r["start"])
+        if dt:
+            x("UPDATE tournaments SET date=?, time=?, weekday=? WHERE id=?",
+              (date_text(dt), dt.strftime("%H:%M"), weekday_text(dt), r["id"]))
 
 
 def log(who, action):
@@ -199,56 +416,306 @@ def save_player(tg_id, name, username, phone):
 
 
 # ----------------------------------------------------------------------------
-# ЛОГИКА ТУРНИРА
+# АФИША: ОТКУДА БЕРУТСЯ ТУРНИРЫ
 # ----------------------------------------------------------------------------
 
+def create_tournament(dt, title=None, seats=None, buyin=None, meta=None, auto=0, admin=None):
+    """Создаёт турнир на дату dt. Если турнир на это время уже есть — возвращает его."""
+    base = CFG["tournament"]
+    key = dt.strftime(FMT)
+    exist = q("SELECT * FROM tournaments WHERE start=?", (key,), one=True)
+    if exist:
+        return exist["id"]
+    nid = x("""INSERT INTO tournaments(title, start, date, time, weekday, buyin, reentry, addon,
+                                       stack, seats, meta, theme, status, auto)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'open',?)""",
+            (title or base["title"], key, date_text(dt), dt.strftime("%H:%M"), weekday_text(dt),
+             int(buyin if buyin is not None else base.get("buyin", 0)),
+             int(base.get("reentry", 0)), int(base.get("addon", 0)),
+             int(base.get("stack", 0)), int(seats or base.get("seats", 36)),
+             meta or base.get("meta"), base.get("theme", ""), int(auto)))
+    log(admin, f"создан турнир #{nid} на {key}")
+    return nid
+
+
+def ensure_events(quiet=True):
+    """Достраивает афишу: разовые события из config.json плюс расписание клуба."""
+    made = []
+
+    for ev in CFG.get("events") or []:
+        dt = parse_dt(f"{ev.get('date', '')} {ev.get('time') or CFG['tournament']['time']}")
+        if not dt or dt < now() - timedelta(hours=12):
+            continue
+        known = q("SELECT 1 FROM tournaments WHERE start=?", (dt.strftime(FMT),), one=True)
+        nid = create_tournament(dt, ev.get("title"), ev.get("seats"), ev.get("buyin"),
+                                ev.get("meta"))
+        if not known:
+            made.append(nid)
+
+    sch = CFG.get("schedule") or {}
+    if sch.get("on"):
+        days = [str(d).lower()[:2] for d in sch.get("days", [])]
+        hh, mm = ((sch.get("time") or "18:00").split(":") + ["00"])[:2]
+        for i in range(int(sch.get("weeks_ahead", 2)) * 7 + 1):
+            day = (now() + timedelta(days=i)).replace(hour=int(hh), minute=int(mm))
+            if WD_SHORT[day.weekday()] not in days or day < now():
+                continue
+            known = q("SELECT 1 FROM tournaments WHERE start=?", (day.strftime(FMT),), one=True)
+            nid = create_tournament(day, auto=1)
+            if not known:
+                made.append(nid)
+
+    if made and not quiet:
+        print(f"Афиша достроена: новых турниров {len(made)}")
+    return made
+
+
+def auto_live():
+    """За 10 минут до старта турнир открывается — касса переключается на него сама."""
+    before = int(CFG.get("open_before_min", 10))
+    for r in q("SELECT * FROM tournaments WHERE status='open'"):
+        dt = parse_dt(r["start"])
+        if dt and now() >= dt - timedelta(minutes=before):
+            x("UPDATE tournaments SET status='live' WHERE id=?", (r["id"],))
+            log("сервер", f"турнир #{r['id']} открыт в кассе")
+            notify_start(r["id"])
+
+
+def notify_start(t_id):
+    """Сообщение записавшимся, что турнир начинается."""
+    row = t_row(t_id)
+    if not row or not CFG.get("bot_token"):
+        return
+    dt = parse_dt(row["start"])
+    for r in q("""SELECT p.tg_id FROM entries e JOIN players p ON p.id=e.player_id
+                  WHERE e.tid=? AND e.wait=0 AND p.tg_id IS NOT NULL""", (t_id,)):
+        send(r["tg_id"], f"<b>{row['title']}</b> начинается в "
+                         f"{dt.strftime('%H:%M') if dt else 'ближайшее время'}. "
+                         "Подойдите к администратору, чтобы оплатить вход.")
+        time.sleep(0.05)
+
+
+def ticker():
+    """Раз в минуту: открыть турнир, если пора, и время от времени достроить афишу."""
+    while True:
+        try:
+            auto_live()
+            if now().minute % 30 == 0:
+                ensure_events()
+        except Exception:
+            traceback.print_exc()
+        time.sleep(60)
+
+
+# ----------------------------------------------------------------------------
+# ТЕКУЩИЙ ТУРНИР
+# ----------------------------------------------------------------------------
+
+def t_row(t_id):
+    return q("SELECT * FROM tournaments WHERE id=?", (t_id,), one=True)
+
+
 def tid():
-    return CFG["tournament"]["id"]
+    """Турнир, с которым сейчас работает касса.
+
+    Выбирается сам: идущий турнир, иначе ближайший из афиши. Администратор
+    может закрепить любой другой турнир кнопкой в кассе.
+    """
+    pin = setting("pin_tid")
+    if pin and pin.isdigit() and t_row(int(pin)):
+        return int(pin)
+    # среди открытых в кассе берём тот, что начался последним
+    r = q("SELECT id FROM tournaments WHERE status='live' ORDER BY start DESC LIMIT 1", one=True)
+    if r:
+        return r["id"]
+    edge = (now() - timedelta(hours=12)).strftime(FMT)
+    r = q("SELECT id FROM tournaments WHERE status!='finished' AND start>=? ORDER BY start LIMIT 1",
+          (edge,), one=True)
+    if r:
+        return r["id"]
+    r = q("SELECT id FROM tournaments ORDER BY start DESC LIMIT 1", one=True)
+    return r["id"] if r else 0
 
 
-def t_status():
-    row = q("SELECT status FROM tournaments WHERE id=?", (tid(),), one=True)
+def reg_open(row):
+    """Можно ли записаться: до старта всегда, после — пока идёт поздняя регистрация."""
+    if not row or row["status"] == "finished":
+        return False
+    dt = parse_dt(row["start"])
+    return bool(dt) and now() <= dt + timedelta(minutes=late_minutes())
+
+
+def can_cancel(row):
+    """Отписаться самому можно, пока до старта больше 10 минут."""
+    if not row or row["status"] == "finished":
+        return False
+    dt = parse_dt(row["start"])
+    return bool(dt) and now() < dt - timedelta(minutes=int(CFG.get("cancel_before_min", 10)))
+
+
+def t_info(row):
+    """Строка турнира → словарь для приложения и кассы."""
+    base = CFG["tournament"]
+    if not row:
+        dt = now().replace(hour=18, minute=0)
+        return {"id": 0, "title": base["title"], "start": dt.strftime(FMT),
+                "date": date_text(dt), "time": base["time"], "weekday": weekday_text(dt),
+                "tag": tag_text(dt), "when": when_text(dt), "status": "open",
+                "buyin": base["buyin"], "reentry": base["reentry"], "addon": base["addon"],
+                "stack": base["stack"], "seats": base["seats"], "meta": base["meta"],
+                "theme": "", "taken": 0, "free": base["seats"], "waiting": 0,
+                "starts_in": 0, "reg_open": False, "can_cancel": False, "late": False,
+                "empty": True}
+    dt = parse_dt(row["start"]) or now()
+    seats = row["seats"] or base["seats"]
+    tk = seated_count(row["id"])
+    return {
+        "id": row["id"],
+        "title": row["title"] or base["title"],
+        "start": row["start"],
+        "date": row["date"] or date_text(dt),
+        "time": row["time"] or dt.strftime("%H:%M"),
+        "weekday": row["weekday"] or weekday_text(dt),
+        "tag": tag_text(dt),
+        "when": when_text(dt),
+        "status": row["status"],
+        "buyin": row["buyin"] or base["buyin"],
+        "reentry": row["reentry"] if row["reentry"] is not None else base["reentry"],
+        "addon": row["addon"] if row["addon"] is not None else base["addon"],
+        "stack": row["stack"] or base["stack"],
+        "seats": seats,
+        "meta": row["meta"] or base["meta"],
+        "theme": row["theme"] or "",
+        "taken": tk,
+        "free": max(0, seats - tk),
+        "waiting": q("SELECT COUNT(*) AS c FROM entries WHERE tid=? AND wait=1",
+                     (row["id"],), one=True)["c"],
+        "starts_in": minutes_left(dt),
+        "reg_open": reg_open(row),
+        "can_cancel": can_cancel(row),
+        "late": row["status"] != "finished" and now() > dt,
+        "empty": False,
+    }
+
+
+def current_tournament():
+    """Данные текущего турнира одним словарём."""
+    return t_info(t_row(tid()))
+
+
+def feed(limit=8):
+    """Лента афиши: идущие и будущие турниры по порядку."""
+    edge = (now() - timedelta(hours=12)).strftime(FMT)
+    rows = q("""SELECT * FROM tournaments WHERE start>=? AND status!='finished'
+                ORDER BY start LIMIT ?""", (edge, limit))
+    if not rows:
+        rows = q("SELECT * FROM tournaments ORDER BY start DESC LIMIT 1")
+    return [t_info(r) for r in rows]
+
+
+def t_status(t_id=None):
+    row = t_row(t_id or tid())
     return row["status"] if row else "open"
 
 
-def taken():
-    return q("SELECT COUNT(*) AS c FROM entries WHERE tid=?", (tid(),), one=True)["c"]
+def taken(t_id=None):
+    return q("SELECT COUNT(*) AS c FROM entries WHERE tid=?", (t_id or tid(),), one=True)["c"]
 
 
-def alive_count():
+def alive_count(t_id=None):
     return q("SELECT COUNT(*) AS c FROM entries WHERE tid=? AND arrived=1 AND busted=0",
-             (tid(),), one=True)["c"]
+             (t_id or tid(),), one=True)["c"]
 
 
-def register_player(player_id):
-    if t_status() != "open":
-        return False, "Регистрация закрыта"
-    if q("SELECT 1 FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True):
-        return False, "Вы уже записаны"
-    if taken() >= CFG["tournament"]["seats"]:
-        return False, "Мест нет"
-    x("INSERT INTO entries(tid, player_id) VALUES(?,?)", (tid(), player_id))
-    log(player_id, "запись на турнир")
-    return True, "Вы записаны"
+def seated_count(t_id=None):
+    """Сколько человек записано на места (без листа ожидания)."""
+    return q("SELECT COUNT(*) AS c FROM entries WHERE tid=? AND wait=0",
+             (t_id or tid(),), one=True)["c"]
 
 
-def unregister_player(player_id):
-    row = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
+# ----------------------------------------------------------------------------
+# ЗАПИСЬ НА ТУРНИР
+# ----------------------------------------------------------------------------
+
+def register_player(player_id, t_id=None):
+    t_id = int(t_id or tid())
+    row = t_row(t_id)
     if not row:
+        return False, "Турнир не найден"
+    if row["status"] == "finished":
+        return False, "Турнир уже завершён"
+    if not reg_open(row):
+        return False, "Регистрация на этот турнир закрыта"
+    if q("SELECT 1 FROM entries WHERE tid=? AND player_id=?", (t_id, player_id), one=True):
+        return False, "Вы уже записаны"
+    seats = row["seats"] or CFG["tournament"]["seats"]
+    wait = 1 if seated_count(t_id) >= seats else 0
+    x("INSERT INTO entries(tid, player_id, wait) VALUES(?,?,?)", (t_id, player_id, wait))
+    log(player_id, f"запись на турнир #{t_id}" + (" (лист ожидания)" if wait else ""))
+    if wait:
+        return True, f"Мест нет, вы в листе ожидания под номером {waiting_no(player_id, t_id)}"
+    dt = parse_dt(row["start"])
+    return True, ("Вы записаны — ждём " + when_text(dt)) if dt else "Вы записаны"
+
+
+def waiting_no(player_id, t_id=None):
+    """Какой по счёту игрок в листе ожидания."""
+    rows = q("SELECT player_id FROM entries WHERE tid=? AND wait=1 ORDER BY id", (t_id or tid(),))
+    for i, r in enumerate(rows, 1):
+        if r["player_id"] == player_id:
+            return i
+    return 0
+
+
+def promote_from_waitlist(t_id=None):
+    """Освободилось место — первый из листа ожидания занимает его."""
+    t_id = int(t_id or tid())
+    row = t_row(t_id)
+    seats = (row["seats"] if row else 0) or CFG["tournament"]["seats"]
+    if seated_count(t_id) >= seats:
+        return None
+    e = q("SELECT * FROM entries WHERE tid=? AND wait=1 ORDER BY id LIMIT 1", (t_id,), one=True)
+    if not e:
+        return None
+    x("UPDATE entries SET wait=0 WHERE id=?", (e["id"],))
+    p = q("SELECT * FROM players WHERE id=?", (e["player_id"],), one=True)
+    if p and p["tg_id"] and row:
+        dt = parse_dt(row["start"])
+        send(p["tg_id"], f"Освободилось место на турнире «{row['title']}» "
+                         f"{when_text(dt) if dt else ''} — вы в основном списке. Ждём вас!")
+    log(e["player_id"], f"переведён из листа ожидания, турнир #{t_id}")
+    return e["player_id"]
+
+
+def unregister_player(player_id, t_id=None):
+    t_id = int(t_id or tid())
+    row = t_row(t_id)
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (t_id, player_id), one=True)
+    if not e:
         return False, "Вы не записаны"
-    if row["arrived"]:
+    if e["arrived"]:
         return False, "Вход уже оплачен, отмена только у администратора"
-    x("DELETE FROM entries WHERE id=?", (row["id"],))
-    log(player_id, "отмена записи")
+    if not can_cancel(row):
+        return False, ("До начала меньше 10 минут — список уже закрыт. "
+                       "Если не получается прийти, скажите администратору")
+    x("DELETE FROM entries WHERE id=?", (e["id"],))
+    log(player_id, f"отмена записи, турнир #{t_id}")
+    promote_from_waitlist(t_id)
     return True, "Запись отменена"
 
 
+# ----------------------------------------------------------------------------
+# КАССА
+# ----------------------------------------------------------------------------
+
 def purchase(player_id, kind, admin=None):
     """Вход, ре-энтри или аддон. Возвращает (успех, сообщение)."""
-    t = CFG["tournament"]
+    t = current_tournament()
     price = {"buyin": t["buyin"], "reentry": t["reentry"], "addon": t["addon"]}.get(kind)
     if price is None:
         return False, "Неизвестная операция"
+    if kind == "addon" and not price:
+        return False, "Аддон в этом турнире не продаётся"
 
     e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
     if not e:
@@ -258,7 +725,7 @@ def purchase(player_id, kind, admin=None):
     if kind == "buyin":
         if e["arrived"]:
             return False, "Вход уже оплачен"
-        x("UPDATE entries SET arrived=1, busted=0, place=0 WHERE id=?", (e["id"],))
+        x("UPDATE entries SET arrived=1, busted=0, place=0, wait=0 WHERE id=?", (e["id"],))
     elif kind == "reentry":
         if not e["busted"]:
             return False, "Игрок ещё в игре"
@@ -285,9 +752,72 @@ def bust(player_id, admin=None):
     return True, f"{place} место"
 
 
+def make_seating(admin=None):
+    """Случайно раскидывает пришедших игроков по столам."""
+    import random
+    per = max(2, min(10, int(CFG.get("seats_per_table", 9))))
+    rows = q("SELECT e.id FROM entries e WHERE e.tid=? AND e.arrived=1 AND e.busted=0", (tid(),))
+    ids = [r["id"] for r in rows]
+    random.shuffle(ids)
+    for i, eid in enumerate(ids):
+        x("UPDATE entries SET table_no=?, seat_no=? WHERE id=?",
+          (i // per + 1, i % per + 1, eid))
+    log(admin, f"рассадка: {len(ids)} игроков")
+    return len(ids)
+
+
+def seating():
+    """Кто за каким столом сидит."""
+    rows = q("""SELECT p.name, e.table_no, e.seat_no FROM entries e
+                JOIN players p ON p.id = e.player_id
+                WHERE e.tid=? AND e.arrived=1 AND e.busted=0 AND e.table_no > 0
+                ORDER BY e.table_no, e.seat_no""", (tid(),))
+    tables = {}
+    for r in rows:
+        tables.setdefault(r["table_no"], []).append({"seat": r["seat_no"], "name": r["name"]})
+    return [{"table": k, "players": v} for k, v in sorted(tables.items())]
+
+
+def remove_entry(player_id, admin=None):
+    """Убирает игрока из турнира вместе с его покупками. Для ошибок и отказов."""
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
+    if not e:
+        return False, "Игрока нет в турнире"
+    x("DELETE FROM purchases WHERE tid=? AND player_id=?", (tid(), player_id))
+    x("DELETE FROM entries WHERE id=?", (e["id"],))
+    log(admin, f"игрок {player_id} убран из турнира")
+    promote_from_waitlist()
+    return True, "Игрок убран из турнира"
+
+
+def unbust(player_id, admin=None):
+    """Вернуть игрока в игру, если выбывание отметили по ошибке."""
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
+    if not e or not e["busted"]:
+        return False, "Игрок и так в игре"
+    x("UPDATE entries SET busted=0, place=0 WHERE id=?", (e["id"],))
+    log(admin, f"игрок {player_id} возвращён в игру")
+    return True, "Игрок снова в игре"
+
+
+def plural(n, one, few, many):
+    """Правильное окончание: 1 игрок, 2 игрока, 5 игроков."""
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
 def finish_tournament(admin=None):
     """Закрывает турнир и начисляет очки рейтинга."""
+    if t_status() == "finished":
+        return False, "Турнир уже завершён"
     rest = q("SELECT * FROM entries WHERE tid=? AND arrived=1 AND busted=0", (tid(),))
+    if len(rest) > 1:
+        return False, (f"В игре ещё {len(rest)} {plural(len(rest), 'игрок', 'игрока', 'игроков')}. "
+                       "Отметьте выбывших — тот, кто останется последним, получит первое место")
     if len(rest) == 1:
         x("UPDATE entries SET busted=1, place=1 WHERE id=?", (rest[0]["id"],))
     pts = CFG["points"]
@@ -295,9 +825,34 @@ def finish_tournament(admin=None):
         place = e["place"] or 0
         p = pts[place - 1] if 0 < place <= len(pts) else CFG["points_rest"]
         x("UPDATE entries SET points=? WHERE id=?", (p, e["id"]))
+    # записался и не пришёл — незачем хранить в сыгранном турнире
+    x("DELETE FROM entries WHERE tid=? AND arrived=0", (tid(),))
     x("UPDATE tournaments SET status='finished' WHERE id=?", (tid(),))
-    log(admin, "турнир завершён, очки начислены")
+    log(admin, f"турнир #{tid()} завершён, очки начислены")
+    setting("pin_tid", "")        # касса сама перейдёт к следующему турниру афиши
     return True, "Турнир завершён"
+
+
+def achievements(player_id):
+    """Простые достижения — по тому, что уже есть в базе."""
+    s = player_stats(player_id)
+    got = []
+    if s["games"] >= 1:
+        got.append({"icon": "♠", "title": "Первый турнир", "done": True})
+    if s["finals"]:
+        got.append({"icon": "★", "title": "Финальный стол", "done": True})
+    if s["best"] and s["best"] <= 3:
+        got.append({"icon": "▲", "title": "Призовая тройка", "done": True})
+    if s["best"] == 1:
+        got.append({"icon": "♛", "title": "Победа в турнире", "done": True})
+    if s["games"] >= 5:
+        got.append({"icon": "≡", "title": "Пять турниров", "done": True})
+    # ближайшая невыполненная цель — показываем серой
+    if s["games"] < 5:
+        got.append({"icon": "≡", "title": f"Пять турниров ({s['games']}/5)", "done": False})
+    elif s["best"] != 1:
+        got.append({"icon": "♛", "title": "Победа в турнире", "done": False})
+    return got[:6]
 
 
 def player_stats(player_id):
@@ -329,8 +884,8 @@ def history(player_id):
     rows = q("""SELECT t.title, t.date, e.place, e.points,
                        (SELECT COUNT(*) FROM entries e2 WHERE e2.tid = e.tid AND e2.arrived=1) AS total
                 FROM entries e JOIN tournaments t ON t.id = e.tid
-                WHERE e.player_id=? AND e.arrived=1
-                ORDER BY e.id DESC LIMIT 20""", (player_id,))
+                WHERE e.player_id=? AND e.arrived=1 AND t.status='finished'
+                ORDER BY t.start DESC LIMIT 20""", (player_id,))
     return [dict(r) for r in rows]
 
 
@@ -340,18 +895,48 @@ def history(player_id):
 
 TG_API = "https://api.telegram.org/bot{}/{}"
 
+# Если Telegram недоступен напрямую (частая ситуация у российских провайдеров),
+# в config.json можно указать прокси: "proxy": "http://127.0.0.1:2080"
+_opener = None
+
+
+def _get_opener():
+    global _opener
+    if _opener is None:
+        proxy = CFG.get("proxy") or os.environ.get("HTTPS_PROXY") or ""
+        if proxy:
+            handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+            _opener = urllib.request.build_opener(handler)
+        else:
+            _opener = urllib.request.build_opener()
+    return _opener
+
 
 def tg(method, **params):
+    """Запрос к Telegram. Возвращает ответ или None, если связи нет."""
     if not CFG["bot_token"]:
         return None
     url = TG_API.format(CFG["bot_token"], method)
     data = json.dumps(params).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with _get_opener().open(req, timeout=60) as r:
             return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        # Telegram ответил, но отказал — чаще всего неверный токен
+        try:
+            body = json.loads(e.read().decode())
+        except Exception:
+            body = {"description": str(e)}
+        if e.code == 401:
+            print("! Telegram отклонил токен. Проверьте bot_token в config.json.")
+        else:
+            print("! Telegram вернул ошибку:", body.get("description", e))
+        return None
     except Exception as e:
-        print("Ошибка Telegram:", e)
+        # сюда попадают обрывы связи и таймауты
+        if method != "getUpdates":
+            print("! Нет связи с Telegram:", e)
         return None
 
 
@@ -374,25 +959,58 @@ MENU = [[{"text": "🗓 Афиша"}, {"text": "👤 Мои данные"}],
 CONTACT_KB = [[{"text": "📱 Поделиться номером", "request_contact": True}]]
 
 
-def afisha_text():
-    t = CFG["tournament"]
-    free = t["seats"] - taken()
-    return (f"<b>{t['title']}</b>\n"
-            f"{t['weekday']}, {t['date']} · {t['time']}\n"
-            f"{t['meta']}\n\n"
-            f"Свободно мест: <b>{free}</b> из {t['seats']}")
+def afisha_text(player_id=None):
+    """Вся лента афиши одним сообщением."""
+    items = feed()
+    if not items:
+        return "Афиша пока пустая. Ближайшие турниры появятся здесь."
+    out = ["<b>Афиша клуба</b>", ""]
+    for t in items:
+        mark = ""
+        if player_id:
+            e = q("SELECT wait FROM entries WHERE tid=? AND player_id=?",
+                  (t["id"], player_id), one=True)
+            if e:
+                mark = " · <b>вы в листе ожидания</b>" if e["wait"] else " · <b>вы записаны</b>"
+        state = "идёт" if t["status"] == "live" else f"свободно {t['free']} из {t['seats']}"
+        out.append(f"<b>{t['title']}</b>\n{t['weekday']}, {t['date']} · {t['time']}\n"
+                   f"{state}{mark}")
+        out.append("")
+    return "\n".join(out).strip()
 
 
 def afisha_buttons(player_id):
-    signed = q("SELECT 1 FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
+    """Кнопка записи на каждый турнир ленты."""
     rows = []
-    if signed:
-        rows.append([{"text": "❌ Отменить запись", "callback_data": "unreg"}])
-    else:
-        rows.append([{"text": "✅ Записаться", "callback_data": "reg"}])
+    for t in feed(5):
+        e = q("SELECT 1 FROM entries WHERE tid=? AND player_id=?", (t["id"], player_id), one=True)
+        if e:
+            rows.append([{"text": f"❌ Отменить · {t['date']}", "callback_data": f"un:{t['id']}"}])
+        elif t["reg_open"]:
+            rows.append([{"text": f"✅ Записаться · {t['date']}, {t['time']}",
+                          "callback_data": f"re:{t['id']}"}])
     if CFG.get("app_url"):
         rows.append([{"text": "📱 Открыть приложение", "web_app": {"url": CFG["app_url"]}}])
     return rows
+
+
+def structure_text():
+    per = CFG.get("level_minutes", 10)
+    t = CFG["tournament"]
+    lines = ["<b>Структура турнира</b>",
+             f"Стартовый стек: {t['stack']}",
+             f"Уровни по {per} минут · анте по формату большого блайнда",
+             f"Ре-энтри и поздняя регистрация — до конца {CFG.get('late_levels', 10)} уровня "
+             f"({late_minutes()} минут)",
+             ""]
+    lvl = 0
+    for item in CFG.get("structure", []):
+        if isinstance(item, str):
+            lines.append(f"— {item} —")
+        else:
+            lvl += 1
+            lines.append(f"{lvl}. {item[0]} / {item[1]} · анте {item[2]}")
+    return "\n".join(lines)
 
 
 def handle_update(u):
@@ -404,14 +1022,18 @@ def handle_update(u):
         if not p:
             tg("answerCallbackQuery", callback_query_id=cq["id"], text="Сначала регистрация: /start")
             return
-        if cq["data"] == "reg":
-            ok, msg = register_player(p["id"])
+        act, _, raw = (cq.get("data") or "").partition(":")
+        t_id = int(raw) if raw.isdigit() else tid()
+        if act == "re":
+            ok, msg = register_player(p["id"], t_id)
+        elif act == "un":
+            ok, msg = unregister_player(p["id"], t_id)
         else:
-            ok, msg = unregister_player(p["id"])
-        tg("answerCallbackQuery", callback_query_id=cq["id"], text=msg)
+            ok, msg = False, "Не понял кнопку"
+        tg("answerCallbackQuery", callback_query_id=cq["id"], text=msg, show_alert=not ok)
         try:
             tg("editMessageText", chat_id=cq["message"]["chat"]["id"],
-               message_id=cq["message"]["message_id"], text=afisha_text(),
+               message_id=cq["message"]["message_id"], text=afisha_text(p["id"]),
                parse_mode="HTML", reply_markup={"inline_keyboard": afisha_buttons(p["id"])})
         except Exception:
             pass
@@ -435,14 +1057,14 @@ def handle_update(u):
         p = save_player(frm["id"], name, frm.get("username"), c.get("phone_number"))
         send(chat, f"Готово, {name}. Вы участник клуба под номером <b>{p['number']}</b>.\n"
                    f"Теперь можно записаться на турнир.", keyboard=MENU)
-        send(chat, afisha_text(), inline=afisha_buttons(p["id"]))
+        send(chat, afisha_text(p["id"]), inline=afisha_buttons(p["id"]))
         return
 
     # --- команды ---
     if text.startswith("/start"):
         if player:
             send(chat, f"С возвращением, {player['name']}.", keyboard=MENU)
-            send(chat, afisha_text(), inline=afisha_buttons(player["id"]))
+            send(chat, afisha_text(player["id"]), inline=afisha_buttons(player["id"]))
         else:
             send(chat, f"Добро пожаловать в <b>{CFG['club']}</b>.\n\n"
                        "Играть в клубе можно после регистрации — так ведётся ваша статистика "
@@ -459,7 +1081,7 @@ def handle_update(u):
         return
 
     if text.startswith("🗓") or text == "/afisha":
-        send(chat, afisha_text(), inline=afisha_buttons(player["id"]))
+        send(chat, afisha_text(player["id"]), inline=afisha_buttons(player["id"]))
         return
 
     if text.startswith("👤") or text == "/me":
@@ -473,19 +1095,13 @@ def handle_update(u):
         return
 
     if text.startswith("ℹ️") or text == "/about":
-        send(chat, f"<b>{CFG['club']}</b>\nКлуб спортивного покера.\n"
+        send(chat, f"<b>{CFG['club']}</b>\nКлуб спортивного покера. Москва.\n"
                    "Good players · Better people.\n\n"
                    "Играем по правилам спортивного покера, призы — очки рейтинга сезона.")
         return
 
     if text.startswith("📋") or text == "/structure":
-        t = CFG["tournament"]
-        send(chat, f"<b>Структура турнира</b>\n"
-                   f"Стартовый стек: {t['stack']}\n"
-                   f"Уровни по 20 минут\n"
-                   f"Ре-энтри и регистрация — первые 100 минут\n"
-                   f"Аддон {t['addon']} ₽ в перерыве после 5 уровня\n"
-                   f"Вход {t['buyin']} ₽ · ре-энтри {t['reentry']} ₽")
+        send(chat, structure_text())
         return
 
     # --- админ ---
@@ -497,10 +1113,14 @@ def handle_update(u):
             send(chat, f"Игроков в базе: <b>{total}</b>\n\n{lst}")
             return
         if text == "/list":
-            rows = q("""SELECT p.name, p.number, e.arrived FROM entries e
-                        JOIN players p ON p.id = e.player_id WHERE e.tid=? ORDER BY e.id""", (tid(),))
-            lst = "\n".join(f"{i+1}. {r['name']}" + (" ✅" if r["arrived"] else "") for i, r in enumerate(rows))
-            send(chat, f"Записано: <b>{len(rows)}</b>\n\n{lst or '— пока никого'}")
+            t = current_tournament()
+            rows = q("""SELECT p.name, e.arrived, e.wait FROM entries e
+                        JOIN players p ON p.id = e.player_id WHERE e.tid=? ORDER BY e.id""",
+                     (t["id"],))
+            lst = "\n".join(f"{i+1}. {r['name']}" + (" ✅" if r["arrived"] else "") +
+                            (" ⏳" if r["wait"] else "") for i, r in enumerate(rows))
+            send(chat, f"<b>{t['title']}</b> · {t['date']} {t['time']}\n"
+                       f"Записано: <b>{len(rows)}</b>\n\n{lst or '— пока никого'}")
             return
         if text.startswith("/say "):
             msg = text[5:]
@@ -522,13 +1142,23 @@ def bot_loop():
         return
     me = tg("getMe")
     if not me or not me.get("ok"):
-        print("! Не удалось подключиться к Telegram. Проверьте токен.")
+        print()
+        print("! Бот не запустился. Сайт и касса при этом работают.")
+        print("  Две возможные причины:")
+        print("  1) Неверный токен — проверьте bot_token в config.json.")
+        print("  2) Нет доступа к api.telegram.org (частая ситуация у российских провайдеров).")
+        print("     Проверка:  curl -I https://api.telegram.org")
+        print("     Решение:   включите VPN, либо укажите прокси в config.json:")
+        print('                "proxy": "http://127.0.0.1:2080"')
+        print("     Либо перенесите сервер на хостинг, у которого доступ есть.")
+        print()
         return
     print(f"Бот запущен: @{me['result']['username']}")
     tg("setMyCommands", commands=[
         {"command": "start", "description": "Регистрация и меню"},
-        {"command": "afisha", "description": "Ближайший турнир"},
+        {"command": "afisha", "description": "Афиша клуба"},
         {"command": "me", "description": "Мои данные"},
+        {"command": "structure", "description": "Структура турнира"},
     ])
     offset = 0
     while True:
@@ -581,6 +1211,29 @@ MIME = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
         ".json": "application/json; charset=utf-8"}
 
 
+def my_state(t, player_id):
+    """Добавляет к карточке турнира то, что касается лично этого игрока."""
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (t["id"], player_id), one=True)
+    t = dict(t)
+    t.update({
+        "registered": bool(e),
+        "wait": bool(e and e["wait"]),
+        "wait_no": waiting_no(player_id, t["id"]) if (e and e["wait"]) else 0,
+        "arrived": bool(e and e["arrived"]),
+        "busted": bool(e and e["busted"]),
+        "place": (e["place"] if e else 0),
+        "table": (e["table_no"] if e else 0),
+        "seat": (e["seat_no"] if e else 0),
+    })
+    return t
+
+
+def names_of(t_id, wait):
+    rows = q("""SELECT p.name FROM entries e JOIN players p ON p.id = e.player_id
+                WHERE e.tid=? AND e.wait=? ORDER BY e.id""", (t_id, 1 if wait else 0))
+    return [r["name"] for r in rows]
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "UnionPoker"
 
@@ -613,7 +1266,10 @@ class Handler(BaseHTTPRequestHandler):
         if tg_id is None and CFG.get("dev"):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             if "dev_id" in qs:
-                tg_id = int(qs["dev_id"][0])
+                try:
+                    tg_id = int(qs["dev_id"][0])
+                except ValueError:
+                    tg_id = None
         if tg_id is None:
             return None
         return q("SELECT * FROM players WHERE tg_id=?", (tg_id,), one=True)
@@ -639,20 +1295,33 @@ class Handler(BaseHTTPRequestHandler):
             p = self.who()
             if not p:
                 return self.json_out({"error": "Откройте приложение из бота"}, 401)
-            t = CFG["tournament"]
-            e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), p["id"]), one=True)
             s = player_stats(p["id"])
+            items = []
+            for t in feed():
+                t = my_state(t, p["id"])
+                t["players"] = names_of(t["id"], False)
+                t["waitlist"] = names_of(t["id"], True)
+                items.append(t)
+            live = current_tournament()
             return self.json_out({
+                "club": CFG.get("club", "Union Poker"),
                 "me": {"name": p["name"], "username": p["username"] or "", "number": p["number"],
                        "since": (p["created"] or "")[:4],
                        "tournaments": s["games"], "best": s["best"], "finals": s["finals"] or 0,
-                       "points": s["points"], "rank": my_rank(p["id"]) or "—"},
-                "tournaments": [{
-                    "id": t["id"], "title": t["title"], "date": t["date"], "weekday": t["weekday"],
-                    "time": t["time"], "buyin": t["buyin"], "seats": t["seats"], "taken": taken(),
-                    "theme": "", "tag": f"{t['date'].split()[0]} {t['date'].split()[1][:3]} · {t['time']}",
-                    "meta": t["meta"], "registered": bool(e), "status": t_status()
-                }],
+                       "points": s["points"], "rank": my_rank(p["id"]) or "—",
+                       "achievements": achievements(p["id"])},
+                "tournaments": items,
+                "live": {"status": live["status"], "id": live["id"], "title": live["title"],
+                         "alive": alive_count(),
+                         "seating": seating() if live["status"] == "live" else []},
+                "structure": {"levels": CFG.get("structure", []),
+                              "minutes": CFG.get("level_minutes", 10),
+                              "stack": CFG["tournament"].get("stack", 0),
+                              "chips": CFG.get("chips", []),
+                              "late_levels": CFG.get("late_levels", 10),
+                              "late_minutes": late_minutes(),
+                              "final_at": CFG.get("final_at", 9)},
+                "rules": CFG.get("rules", []),
                 "rating": [{"place": r["place"], "name": r["name"], "games": r["games"],
                             "points": r["points"], "me": r["id"] == p["id"]} for r in rating()],
                 "history": [{"date": h["date"], "title": h["title"], "place": h["place"],
@@ -663,19 +1332,30 @@ class Handler(BaseHTTPRequestHandler):
             if not self.admin_ok():
                 return self.json_out({"error": "Нет доступа"}, 403)
             rows = q("""SELECT p.id, p.name, p.number, e.arrived, e.busted, e.place,
-                               (SELECT COUNT(*) FROM purchases s WHERE s.tid=e.tid AND s.player_id=p.id AND s.kind='reentry') AS reentry,
-                               (SELECT COUNT(*) FROM purchases s WHERE s.tid=e.tid AND s.player_id=p.id AND s.kind='addon') AS addon
+                               e.wait, e.table_no, e.seat_no,
+                               (SELECT COUNT(*) FROM purchases s
+                                 WHERE s.tid=e.tid AND s.player_id=p.id AND s.kind='reentry') AS reentry,
+                               (SELECT COUNT(*) FROM purchases s
+                                 WHERE s.tid=e.tid AND s.player_id=p.id AND s.kind='addon') AS addon
                         FROM entries e JOIN players p ON p.id=e.player_id
-                        WHERE e.tid=? ORDER BY p.name""", (tid(),))
+                        WHERE e.tid=? ORDER BY e.wait, p.name""", (tid(),))
             money = q("""SELECT kind, COUNT(*) AS n, COALESCE(SUM(amount),0) AS sum
                          FROM purchases WHERE tid=? GROUP BY kind""", (tid(),))
             return self.json_out({
-                "tournament": CFG["tournament"] | {"status": t_status()},
+                "tournament": current_tournament(),
+                "pinned": bool(setting("pin_tid")),
                 "players": [dict(r) for r in rows],
                 "alive": alive_count(),
                 "money": {r["kind"]: {"n": r["n"], "sum": r["sum"]} for r in money},
-                "total": sum(r["sum"] for r in money)
+                "total": sum(r["sum"] for r in money),
+                "late_minutes": late_minutes()
             })
+
+        if path == "/api/admin/afisha":
+            if not self.admin_ok():
+                return self.json_out({"error": "Нет доступа"}, 403)
+            return self.json_out({"current": tid(), "pinned": bool(setting("pin_tid")),
+                                  "items": feed(12)})
 
         if path == "/api/admin/players.json":
             if not self.admin_ok():
@@ -707,9 +1387,10 @@ class Handler(BaseHTTPRequestHandler):
             p = self.who()
             if not p:
                 return self.json_out({"error": "Откройте приложение из бота"}, 401)
-            ok, msg = (register_player(p["id"]) if body.get("action") != "cancel"
-                       else unregister_player(p["id"]))
-            return self.json_out({"ok": ok, "message": msg, "taken": taken()})
+            t_id = int(body.get("tid") or tid())
+            ok, msg = (register_player(p["id"], t_id) if body.get("action") != "cancel"
+                       else unregister_player(p["id"], t_id))
+            return self.json_out({"ok": ok, "message": msg, "taken": seated_count(t_id)})
 
         if path.startswith("/api/admin/"):
             if not self.admin_ok():
@@ -727,9 +1408,63 @@ class Handler(BaseHTTPRequestHandler):
                 name = (body.get("name") or "").strip()
                 if not name:
                     return self.json_out({"ok": False, "message": "Пустое имя"})
-                pid = x("INSERT INTO players(name, number) VALUES(?,?)", (name, next_number()))
+                exist = q("SELECT * FROM players WHERE lower(name)=lower(?)", (name,), one=True)
+                pid = exist["id"] if exist else x(
+                    "INSERT INTO players(name, number) VALUES(?,?)", (name, next_number()))
                 x("INSERT OR IGNORE INTO entries(tid, player_id) VALUES(?,?)", (tid(), pid))
                 return self.json_out({"ok": True, "message": "Добавлен", "player_id": pid})
+
+            if path == "/api/admin/seat":
+                n = make_seating("admin")
+                return self.json_out({"ok": True, "message": f"Рассажено игроков: {n}",
+                                      "seating": seating()})
+
+            if path == "/api/admin/remove":
+                ok, msg = remove_entry(body.get("player_id"), "admin")
+                return self.json_out({"ok": ok, "message": msg})
+
+            if path == "/api/admin/unbust":
+                ok, msg = unbust(body.get("player_id"), "admin")
+                return self.json_out({"ok": ok, "message": msg})
+
+            if path == "/api/admin/new-tournament":
+                when = f"{body.get('date', '')} {body.get('time') or CFG['tournament']['time']}"
+                dt = parse_dt(when)
+                if not dt:
+                    return self.json_out({"ok": False,
+                                          "message": "Не понял дату. Формат: 2026-10-04"})
+                nid = create_tournament(dt, body.get("title"), body.get("seats"),
+                                        body.get("buyin"), body.get("meta"), admin="admin")
+                if body.get("pin"):
+                    setting("pin_tid", nid)
+                return self.json_out({"ok": True, "id": nid,
+                                      "message": f"Турнир создан — {when_text(dt)}"})
+
+            if path == "/api/admin/pin":
+                t_id = body.get("tid")
+                if not t_id:
+                    setting("pin_tid", "")
+                    return self.json_out({"ok": True,
+                                          "message": "Касса снова выбирает турнир сама"})
+                if not t_row(int(t_id)):
+                    return self.json_out({"ok": False, "message": "Турнир не найден"})
+                setting("pin_tid", int(t_id))
+                return self.json_out({"ok": True, "message": "Переключено",
+                                      "tournament": current_tournament()})
+
+            if path == "/api/admin/delete-tournament":
+                t_id = int(body.get("tid") or 0)
+                if not t_row(t_id):
+                    return self.json_out({"ok": False, "message": "Турнир не найден"})
+                if q("SELECT 1 FROM purchases WHERE tid=? LIMIT 1", (t_id,), one=True):
+                    return self.json_out({"ok": False,
+                                          "message": "В турнире уже есть оплаты — удалять нельзя"})
+                x("DELETE FROM entries WHERE tid=?", (t_id,))
+                x("DELETE FROM tournaments WHERE id=?", (t_id,))
+                if setting("pin_tid") == str(t_id):
+                    setting("pin_tid", "")
+                log("admin", f"турнир #{t_id} убран из афиши")
+                return self.json_out({"ok": True, "message": "Турнир убран из афиши"})
 
             if path == "/api/admin/finish":
                 ok, msg = finish_tournament("admin")
@@ -748,11 +1483,20 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     init_db()
     os.makedirs(PUBLIC, exist_ok=True)
+    ensure_events(quiet=False)
+    auto_live()
+    t = current_tournament()
     threading.Thread(target=bot_loop, daemon=True).start()
+    threading.Thread(target=ticker, daemon=True).start()
     port = int(CFG.get("port", 8080))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"Сервер работает: http://localhost:{port}/app.html")
-    print(f"Касса:           http://localhost:{port}/kassa.html")
+    print()
+    print(f"Ближайший турнир: {t['title']} — {t['weekday']}, {t['date']} в {t['time']}")
+    print(f"Записано: {t['taken']} из {t['seats']}")
+    print()
+    print(f"Приложение: http://localhost:{port}/app.html")
+    print(f"Касса:      http://localhost:{port}/kassa.html")
+    print(f"Таймер:     http://localhost:{port}/timer.html")
     print("Остановить: Ctrl+C")
     try:
         srv.serve_forever()

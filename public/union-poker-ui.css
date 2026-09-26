@@ -207,7 +207,10 @@
   background: linear-gradient(180deg, #FCEBB4 0%, #DDB552 60%, #A87A20 100%);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
-.up-poster__meta{ position: absolute; left: 6cqw; bottom: 6cqw; font: 700 3.7cqw/1.2 var(--up-font-ui); opacity: .9; }
+.up-poster__meta{ position: absolute; left: 6cqw; bottom: 6cqw; max-width: 88cqw;
+  font: 700 3.7cqw/1.25 var(--up-font-ui); opacity: .9; }
+.up-poster--long .up-poster__title{ font-size: 9.6cqw; bottom: 17cqw; max-width: 82cqw; }
+.up-poster--xlong .up-poster__title{ font-size: 7.6cqw; bottom: 17.5cqw; max-width: 86cqw; }
 .up-poster--green{ background: radial-gradient(100% 80% at 82% 16%, #14704F 0%, #0B3B2C 46%, #05130E 100%); }
 .up-poster--wine{ background: radial-gradient(100% 80% at 86% 8%, rgba(226,112,120,.32), transparent 56%),
                               linear-gradient(160deg, #4A1322 0%, #1B0810 70%, #0B0508 100%); }

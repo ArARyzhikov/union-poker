@@ -21,13 +21,20 @@
   .pl .hd{display:flex;align-items:center;gap:10px;}
   .pl .nm{flex:1;min-width:0;font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .pl .sub{color:var(--up-muted);font-size:12.5px;font-weight:600;margin-top:4px;}
-  .btns{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:11px;}
+  .btns{display:grid;grid-template-columns:repeat(var(--cols,4),1fr);gap:7px;margin-top:11px;}
   .btns button{padding:11px 2px;font-size:13px;border-radius:12px;}
   .b-in{background:var(--up-ok-bg);color:var(--up-ok);border-color:rgba(111,217,162,.3);}
   .b-out{background:var(--up-bad-bg);color:var(--up-bad);border-color:rgba(224,104,122,.3);}
   .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(10,9,7,.96);border-top:1px solid var(--up-line);
        padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));backdrop-filter:blur(8px);}
   .bar .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+  .bar .up-btn{padding:12px 6px;font-size:14px;}
+  .done{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
+        border-radius:18px;padding:13px 15px;margin-bottom:12px;font-size:13.5px;line-height:1.5;color:var(--up-muted);}
+  .done .up-btn{margin-top:10px;}
+  .more{width:32px;height:32px;padding:0;border-radius:10px;font-size:17px;line-height:1;flex:none;}
+  .mi{justify-content:flex-start;text-align:left;font-size:13.5px;padding:12px 14px;line-height:1.35;}
+  .mi b{font-weight:800;}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--up-ok);box-shadow:0 0 8px var(--up-ok);}
   .dot.bad{background:var(--up-bad);box-shadow:0 0 8px var(--up-bad);}
 </style>
@@ -40,20 +47,22 @@
          <div class="up-muted" style="font-size:12px;margin-top:4px" id="tdate">—</div></div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
       <span class="dot" id="conn"></span>
-      <button class="up-btn up-btn--sm" id="btnKey">Ключ</button>
+      <button class="up-btn up-btn--sm" id="btnMenu">Меню</button>
     </div>
   </div>
+
+  <div id="doneBar"></div>
 
   <div class="cash">
     <div><span class="up-label">Выручка за вечер</span><b id="total">0 ₽</b></div>
     <div class="det" id="money">—</div>
   </div>
 
-  <div class="up-grid-4" style="margin-bottom:12px">
+  <div class="up-grid-4" id="tiles" style="margin-bottom:12px">
     <div class="up-tile"><b id="s_alive">0</b><small>В ИГРЕ</small></div>
     <div class="up-tile"><b id="s_in">0</b><small>ВХОДОВ</small></div>
     <div class="up-tile"><b id="s_re">0</b><small>РЕ-ЭНТРИ</small></div>
-    <div class="up-tile"><b id="s_ad">0</b><small>АДДОНОВ</small></div>
+    <div class="up-tile" id="tile_ad"><b id="s_ad">0</b><small>АДДОНОВ</small></div>
   </div>
 
   <input class="up-input" id="q" type="search" placeholder="Поиск по фамилии" autocomplete="off" style="margin-bottom:12px">
@@ -62,7 +71,7 @@
 
 <div class="bar"><div class="in">
   <button class="up-btn up-btn--gold" id="btnAdd">+ Игрок</button>
-  <button class="up-btn" id="btnRefresh">Обновить</button>
+  <button class="up-btn" id="btnSeat">Рассадка</button>
   <button class="up-btn" id="btnFinish">Завершить</button>
 </div></div>
 
@@ -70,7 +79,8 @@
   <div class="up-sheet__grab"></div>
   <h2 class="up-h2" id="sheetTitle">Заголовок</h2>
   <p class="up-muted" id="sheetText" style="font-size:14px;margin:6px 0 14px"></p>
-  <div class="up-field"><input class="up-input" id="sheetInput" type="text"></div>
+  <div class="up-field" id="sheetField"><input class="up-input" id="sheetInput" type="text"></div>
+  <div id="sheetMenu" style="display:none;flex-direction:column;gap:8px;margin-bottom:12px"></div>
   <div style="display:flex;gap:10px">
     <button class="up-btn up-btn--ghost" style="flex:1" id="sheetCancel">Отмена</button>
     <button class="up-btn up-btn--gold" style="flex:1" id="sheetOk">Готово</button>
@@ -99,16 +109,46 @@ function toast(msg){
 }
 
 /* ---------- окно вопроса ---------- */
-function ask(title, text, value){
+function ask(title, text, value, type){
   return new Promise(resolve => {
     $('sheetTitle').textContent = title;
     $('sheetText').textContent = text || '';
+    $('sheetInput').type = type || 'text';
     $('sheetInput').value = value || '';
-    $('sheetInput').style.display = value === null ? 'none' : 'block';
+    $('sheetField').style.display = value === null ? 'none' : '';
+    $('sheetMenu').style.display = 'none';
+    $('sheetOk').style.display = '';
     $('sheet').classList.add('up-sheet--open');
     setTimeout(()=>$('sheetInput').focus(), 80);
     const done = v => { $('sheet').classList.remove('up-sheet--open'); resolve(v); };
     $('sheetOk').onclick = () => done($('sheetInput').value.trim());
+    $('sheetCancel').onclick = () => done(null);
+  });
+}
+
+/* ---------- окно выбора ---------- */
+function menu(title, text, items){
+  return new Promise(resolve => {
+    $('sheetTitle').textContent = title;
+    $('sheetText').textContent = text || '';
+    $('sheetField').style.display = 'none';
+    $('sheetOk').style.display = 'none';
+    const box = $('sheetMenu');
+    box.style.display = 'flex';
+    box.innerHTML = items.map((it, i) =>
+      '<button class="up-btn up-btn--block ' + (it.cls || '') + '" data-mi="' + i + '">' +
+      esc(it.label) + '</button>').join('');
+    $('sheet').classList.add('up-sheet--open');
+    const done = v => {
+      $('sheet').classList.remove('up-sheet--open');
+      box.style.display = 'none'; box.innerHTML = '';
+      $('sheetField').style.display = ''; $('sheetOk').style.display = '';
+      resolve(v);
+    };
+    box.onclick = ev => {
+      const b = ev.target.closest('[data-mi]');
+      if (b) done(items[+b.dataset.mi].id);
+    };
     $('sheetCancel').onclick = () => done(null);
   });
 }
@@ -131,12 +171,24 @@ function render(){
   if (!STATE) return;
   const t = STATE.tournament, m = STATE.money || {};
   $('tname').textContent = t.title || 'Касса турнира';
-  $('tdate').textContent = (t.weekday ? t.weekday + ', ' : '') + (t.date || '') + ' · ' + (t.time || '');
+  $('tdate').innerHTML = (t.weekday ? t.weekday + ', ' : '') + (t.date || '') + ' · ' + (t.time || '') +
+    (STATE.pinned ? ' · выбран вручную' : '') + stateChip(t);
   $('total').textContent = fmt(STATE.total) + ' ₽';
   $('money').innerHTML =
     'входы ' + fmt((m.buyin||{}).sum) + ' ₽<br>' +
-    'ре-энтри ' + fmt((m.reentry||{}).sum) + ' ₽<br>' +
-    'аддоны ' + fmt((m.addon||{}).sum) + ' ₽';
+    'ре-энтри ' + fmt((m.reentry||{}).sum) + ' ₽' +
+    (t.addon ? '<br>аддоны ' + fmt((m.addon||{}).sum) + ' ₽' : '');
+  $('tile_ad').style.display = t.addon ? '' : 'none';
+  $('tiles').className = t.addon ? 'up-grid-4' : 'up-grid-3';
+  $('doneBar').innerHTML = t.status === 'finished'
+    ? '<div class="done">Турнир завершён, очки начислены. Список не стираем: на нём держатся рейтинг ' +
+      'и история в профилях. Как только в афише появится следующий турнир, касса перейдёт на него сама.' +
+      '<button class="up-btn up-btn--gold up-btn--sm up-btn--block" data-new="1">Добавить турнир в афишу</button></div>'
+    : (t.status === 'open' && t.starts_in > 0
+        ? '<div class="done">До начала ' + hhmm(t.starts_in) + '. Записавшиеся уже в списке — ' +
+          'отмечайте вход, когда игроки придут. За 10 минут до старта турнир откроется сам.</div>'
+        : '');
+
   $('s_alive').textContent = STATE.alive;
   $('s_in').textContent = (m.buyin||{}).n || 0;
   $('s_re').textContent = (m.reentry||{}).n || 0;
@@ -151,20 +203,37 @@ function render(){
   box.innerHTML = list.map(p => {
     const tag = p.busted ? '<span class="up-chip up-chip--bad">' + (p.place ? p.place + ' место' : 'выбыл') + '</span>'
               : p.arrived ? '<span class="up-chip up-chip--ok">в игре</span>'
+              : p.wait    ? '<span class="up-chip up-chip--warn">лист ожидания</span>'
                           : '<span class="up-chip">не оплатил</span>';
     const extra = [];
     if (p.reentry) extra.push('ре-энтри ×' + p.reentry);
     if (p.addon)   extra.push('аддон ×' + p.addon);
-    return '<div class="pl' + (p.busted ? ' out' : '') + '">' +
-      '<div class="hd"><div class="nm">' + esc(p.name) + '</div>' + tag + '</div>' +
+    if (p.table_no) extra.push('стол ' + p.table_no + ', место ' + p.seat_no);
+    return '<div class="pl' + (p.busted ? ' out' : '') + '" style="--cols:' +
+      (STATE.tournament.addon ? 4 : 3) + '">' +
+      '<div class="hd"><div class="nm">' + esc(p.name) + '</div>' + tag +
+      '<button class="up-btn more" data-more="' + p.id + '" title="Ещё">···</button></div>' +
       '<div class="sub">№ ' + p.number + (extra.length ? ' · ' + extra.join(' · ') : '') + '</div>' +
       '<div class="btns">' +
         '<button class="up-btn b-in" data-op="buyin" data-id="' + p.id + '">Вход</button>' +
         '<button class="up-btn" data-op="reentry" data-id="' + p.id + '">Ре-энтри</button>' +
-        '<button class="up-btn" data-op="addon" data-id="' + p.id + '">Аддон</button>' +
+        (STATE.tournament.addon ? '<button class="up-btn" data-op="addon" data-id="' + p.id + '">Аддон</button>' : '') +
         '<button class="up-btn b-out" data-op="bust" data-id="' + p.id + '">Выбыл</button>' +
       '</div></div>';
   }).join('');
+}
+
+function hhmm(min){
+  if (min >= 1440) { const d = Math.round(min/1440); return d + ' ' + word(d,'день','дня','дней'); }
+  const h = Math.floor(min/60), m = min%60;
+  return (h ? h + ' ч ' : '') + m + ' мин';
+}
+function word(n,a,b,c){ const t=Math.abs(n)%100, k=t%10;
+  return (t>10&&t<20)?c:(k>1&&k<5)?b:(k===1)?a:c; }
+function stateChip(t){
+  if (t.status === 'finished') return ' · <b style="color:var(--up-warn)">завершён</b>';
+  if (t.status === 'live')     return ' · <b style="color:var(--up-ok)">идёт</b>';
+  return '';
 }
 
 /* ---------- загрузка ---------- */
@@ -180,7 +249,103 @@ async function refresh(silent){
 }
 
 /* ---------- действия ---------- */
+async function playerMenu(id){
+  const p = (STATE.players || []).find(x => x.id === id);
+  if (!p) return;
+  const items = [];
+  if (p.busted) items.push({ id:'unbust', label:'Вернуть в игру', cls:'up-btn--gold' });
+  items.push({ id:'remove', label:'Убрать из турнира' });
+  const act = await menu(p.name, '№ ' + p.number + ' · ' +
+    (p.busted ? (p.place ? p.place + ' место' : 'выбыл') : p.arrived ? 'в игре' : 'вход не оплачен'), items);
+
+  if (act === 'unbust'){
+    const r = await post('/unbust', { player_id: id });
+    toast(r.message || 'Готово'); refresh(true);
+  }
+  if (act === 'remove'){
+    const v = await ask('Убрать игрока?',
+      p.name + ' пропадёт из списка вместе со своими покупками — выручка пересчитается. ' +
+      'Если он платил наличными, деньги вернуть нужно самим. Напишите ДА для подтверждения.', 'ДА');
+    if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
+    const r = await post('/remove', { player_id: id });
+    toast(r.message || 'Готово'); refresh(true);
+  }
+}
+
+async function newTournament(){
+  const base = (STATE && STATE.tournament) || {};
+  const title = await ask('Новый турнир',
+    'Он появится в афише приложения, и на него сразу можно будет записаться.',
+    base.title || 'Вечерний турнир');
+  if (!title) return;
+  const date = await ask('Дата турнира', 'Выберите день.', today(), 'date');
+  if (!date) return;
+  const time = await ask('Время начала', 'Во сколько собираемся.', base.time || '18:00', 'time');
+  if (!time) return;
+  const r = await post('/new-tournament', { title, date, time });
+  toast(r.message || 'Готово');
+  refresh(true);
+}
+
+function today(){
+  const d = new Date(), z = n => String(n).padStart(2,'0');
+  return d.getFullYear() + '-' + z(d.getMonth()+1) + '-' + z(d.getDate());
+}
+
+/* ---------- афиша: список турниров и переключение ---------- */
+async function afishaMenu(){
+  let data;
+  try { data = await get('/afisha'); }
+  catch(e){ toast('Нет связи с сервером'); return; }
+
+  const short = d => String(d||'').replace(/^(\S+)\s+(\S+)$/, (m,a,b) => a + ' ' + b.slice(0,3));
+  const items = (data.items || []).map(t => ({
+    id: 't' + t.id,
+    label: (t.id === data.current ? '● ' : '') + short(t.date) + ', ' + t.time + ' — ' +
+           t.title + ' · ' + t.taken + '/' + t.seats +
+           (t.status === 'live' ? ' · идёт' : ''),
+    cls: 'mi' + (t.id === data.current ? ' up-btn--gold' : '')
+  }));
+  items.push({ id:'new', label:'+ Добавить турнир', cls:'mi' });
+  if (data.pinned) items.push({ id:'auto', label:'Пусть касса выбирает сама', cls:'mi' });
+
+  const act = await menu('Афиша клуба',
+    data.pinned ? 'Турнир выбран вручную. Отметка ✓ — тот, с которым работает касса.'
+                : 'Касса сама держит ближайший турнир. Можно выбрать другой.', items);
+  if (!act) return;
+
+  if (act === 'new') { await newTournament(); return; }
+  if (act === 'auto') {
+    const r = await post('/pin', {});
+    toast(r.message || 'Готово'); refresh(true); return;
+  }
+  const t_id = +act.slice(1);
+  const t = (data.items || []).find(x => x.id === t_id);
+  const what = await menu(t ? t.title : 'Турнир',
+    t ? t.weekday + ', ' + t.date + ' · ' + t.time + ' · записано ' + t.taken : '', [
+      { id:'pin',  label:'Работать с этим турниром', cls:'up-btn--gold' },
+      { id:'del',  label:'Убрать из афиши' }
+    ]);
+  if (what === 'pin'){
+    const r = await post('/pin', { tid: t_id });
+    toast(r.message || 'Готово'); refresh(true);
+  }
+  if (what === 'del'){
+    const v = await ask('Убрать турнир из афиши?',
+      'Он исчезнет из приложения вместе со списком записавшихся. Напишите ДА для подтверждения.', 'ДА');
+    if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
+    const r = await post('/delete-tournament', { tid: t_id });
+    toast(r.message || 'Готово'); refresh(true);
+  }
+}
+
 document.addEventListener('click', async e => {
+  if (e.target.closest('[data-new]')) { await newTournament(); return; }
+  if (e.target.closest('[data-afisha]')) { await afishaMenu(); return; }
+
+  const more = e.target.closest('[data-more]');
+  if (more) { await playerMenu(+more.dataset.more); return; }
+
   const b = e.target.closest('[data-op]');
   if (!b) return;
   b.disabled = true;
@@ -191,13 +356,30 @@ document.addEventListener('click', async e => {
 });
 
 $('q').addEventListener('input', render);
-$('btnRefresh').onclick = () => refresh();
+$('btnSeat').onclick = async () => {
+  const v = await ask('Раскидать по столам?',
+    'Все, кто оплатил вход и ещё в игре, получат новые столы и места случайным образом. ' +
+    'Напишите ДА для подтверждения.', 'ДА');
+  if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
+  const res = await post('/seat', {});
+  toast(res.message || 'Готово');
+  refresh(true);
+};
 
-$('btnKey').onclick = async () => {
-  const v = await ask('Ключ доступа', 'Тот же ключ, что в config.json на сервере.', KEY);
-  if (v === null) return;
-  KEY = v; try { localStorage.setItem('up_admin_key', KEY); } catch(e) {}
-  refresh();
+$('btnMenu').onclick = async () => {
+  const t = (STATE && STATE.tournament) || {};
+  const act = await menu('Касса',
+    t.title ? t.title + ' · ' + (t.date || '') + ' ' + (t.time || '') : 'Сервер не отвечает', [
+      { id:'afisha', label:'Афиша клуба', cls:'up-btn--gold' },
+      { id:'key',    label:'Ключ доступа' }
+    ]);
+  if (act === 'afisha') { await afishaMenu(); return; }
+  if (act === 'key'){
+    const v = await ask('Ключ доступа', 'Тот же ключ, что в config.json на сервере.', KEY);
+    if (v === null) return;
+    KEY = v; try { localStorage.setItem('up_admin_key', KEY); } catch(e) {}
+    refresh();
+  }
 };
 
 $('btnAdd').onclick = async () => {
