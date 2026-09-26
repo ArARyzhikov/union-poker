@@ -1,8 +1,10 @@
 <title>Union Poker Mini App</title>
 <!-- Скрипт Telegram: через него приложение узнаёт, кто его открыл.
      Внутри Telegram он есть всегда; в обычном браузере просто не загрузится. -->
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Forum&family=Manrope:wght@500;600;700;800&display=swap">
+<script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+<!-- Шрифты клуба. Грузятся фоном: если Google недоступен, приложение всё равно работает. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Forum&family=Manrope:wght@500;600;700;800&display=swap"
+      media="print" onload="this.media='all'">
 <link rel="stylesheet" href="union-poker-ui.css">
 <style>
   html,body{background:var(--up-bg);margin:0;}
@@ -184,6 +186,25 @@
    Данные приходят с сервера: /api/app-data
    Если сервера нет — показываем пример, чтобы экраны было видно.
    ============================================================ */
+/* ---------- ошибки видно сразу, до всего остального ---------- */
+function showError(e){
+  const msg = (e && e.message) ? e.message : String(e);
+  try {
+    let d = document.getElementById('errBox');
+    if (!d) {
+      d = document.createElement('div');
+      d.id = 'errBox';
+      d.style.cssText = 'position:fixed;left:8px;right:8px;top:8px;z-index:60;background:#2A1113;' +
+        'border:1px solid #E0687A;color:#FFD9DE;padding:10px 12px;border-radius:12px;' +
+        'font:600 12px/1.45 system-ui,sans-serif;white-space:pre-wrap;max-height:50vh;overflow:auto';
+      (document.body || document.documentElement).appendChild(d);
+    }
+    d.textContent = 'Ошибка приложения:\n' + msg;
+  } catch (_) {}
+}
+window.addEventListener('error', ev => showError(ev.error || ev.message));
+window.addEventListener('unhandledrejection', ev => showError(ev.reason));
+
 const API = (location.protocol === 'file:') ? 'http://localhost:8080/api' : '/api';
 const DEV = new URLSearchParams(location.search).get('dev_id');
 const withDev = p => DEV ? p + (p.includes('?') ? '&' : '?') + 'dev_id=' + DEV : p;
@@ -225,9 +246,15 @@ const MOCK = {
   history: [{date:'20 сентября',title:'Воскресный турнир',place:4,of:32,points:61}]
 };
 
-/* ---------- Telegram ---------- */
-const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-if (tg) { tg.ready(); tg.expand(); }
+/* ---------- Telegram ----------
+   Скрипт Telegram может не загрузиться (например, telegram.org недоступен).
+   Приложение обязано работать и в этом случае, поэтому объект берём осторожно. */
+let tg = null;
+function initTG(){
+  try { tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; }
+  catch (e) { tg = null; }
+  try { if (tg) { tg.ready(); tg.expand(); } } catch (e) { /* старый клиент — не беда */ }
+}
 function haptic(kind){ try{ tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(kind); }catch(e){} }
 
 /* ---------- мелочи ---------- */
@@ -247,6 +274,7 @@ function current(){ return byId(CUR) || list()[0]; }
 
 /* ---------- данные ---------- */
 async function loadData(){
+  DEMO = false;
   try{
     const r = await fetch(withDev(API + '/app-data'), { headers: { 'X-Init-Data': (tg && tg.initData) || '' } });
     if (r.ok) return await r.json();
@@ -594,26 +622,10 @@ function renderAll(){
   if ($('sc-event').classList.contains('screen--on')) renderEvent();
 }
 
-/* ---------- показ ошибок прямо на экране ---------- */
-function showError(e){
-  const msg = (e && e.message) ? e.message : String(e);
-  let d = document.getElementById('errBox');
-  if (!d) {
-    d = document.createElement('div');
-    d.id = 'errBox';
-    d.style.cssText = 'position:fixed;left:8px;right:8px;top:8px;z-index:60;background:#2A1113;' +
-      'border:1px solid #E0687A;color:#FFD9DE;padding:10px 12px;border-radius:12px;' +
-      'font:600 12px/1.45 system-ui,sans-serif;white-space:pre-wrap;max-height:50vh;overflow:auto';
-    document.body.appendChild(d);
-  }
-  d.textContent = 'Ошибка приложения:\n' + msg;
-}
-window.addEventListener('error', ev => showError(ev.error || ev.message));
-window.addEventListener('unhandledrejection', ev => showError(ev.reason));
-
 /* ---------- старт ---------- */
-(async function start(){
+async function start(){
   try {
+  initTG();
   DATA = await loadData();
   if (!DATA || !DATA.me || !DATA.tournaments) {
     DEMO = true; DEMO_REASON = 'сервер прислал неполные данные';
@@ -626,6 +638,7 @@ window.addEventListener('unhandledrejection', ev => showError(ev.reason));
 
   if (DEMO) {
     const d = document.createElement('div');
+    d.id = 'demoBadge';
     d.className = 'up-chip up-chip--warn';
     d.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:8px;z-index:30';
     d.textContent = 'Пример данных · ' + (DEMO_REASON || 'откройте из бота');
@@ -638,5 +651,29 @@ window.addEventListener('unhandledrejection', ev => showError(ev.reason));
     }, 20000);
   }
   } catch (e) { showError(e); }
-})();
+}
+
+// Рисуем как можно раньше: ждём скрипт Telegram, но не дольше секунды.
+let started = false;
+function boot(){ if (!started) { started = true; start(); } }
+if (document.readyState === 'complete') boot();
+else { window.addEventListener('load', boot); setTimeout(boot, 1000); }
+
+// Если скрипт Telegram приехал позже, чем мы нарисовали, — перезапрашиваем данные с подписью.
+window.addEventListener('load', async () => {
+  const had = !!tg;
+  initTG();
+  if (!had && tg) {
+    try {
+      const fresh = await loadData();
+      if (fresh && fresh.me) {
+        DATA = fresh; DEMO = false;
+        const badge = document.getElementById('demoBadge');
+        if (badge) badge.remove();
+        $('me').textContent = initials(DATA.me.name);
+        renderAll();
+      }
+    } catch (e) { console.error(e); }
+  }
+});
 </script>
