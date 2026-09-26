@@ -1226,6 +1226,7 @@ def names_of(t_id, wait):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "UnionPoker"
+    protocol_version = "HTTP/1.1"   # держим соединение открытым: ответы приходят быстрее
 
     def log_message(self, fmt, *args):
         pass  # не засорять терминал

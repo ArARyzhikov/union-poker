@@ -239,7 +239,8 @@ function initData(){ return (tg && tg.initData) || INIT || ''; }
 const API = (location.protocol === 'file:') ? 'http://localhost:8080/api' : '/api';
 const DEV = new URLSearchParams(location.search).get('dev_id');
 const withDev = p => DEV ? p + (p.includes('?') ? '&' : '?') + 'dev_id=' + DEV : p;
-let DEMO = false, DEMO_REASON = '', DATA = null, PART = 'info', CUR = 0, NEEDS_START = false;
+let DEMO = false, DEMO_REASON = '', DATA = null, PART = 'info', CUR = 0,
+    NEEDS_START = false, OFFLINE = false;
 
 const MOCK = {
   club: 'Union Poker',
@@ -304,27 +305,45 @@ function byId(id){ return list().find(t => t.id === id) || list()[0]; }
 function current(){ return byId(CUR) || list()[0]; }
 
 /* ---------- данные ---------- */
+// Запрос, который не может висеть вечно: через 8 секунд обрываем и показываем состояние.
+async function fetchLimited(url, opts, ms){
+  opts = opts || {};
+  if (typeof AbortController === 'function') {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), ms || 8000);
+    try { return await fetch(url, Object.assign({}, opts, { signal: ac.signal })); }
+    finally { clearTimeout(timer); }
+  }
+  return await Promise.race([
+    fetch(url, opts),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут')), ms || 8000))
+  ]);
+}
+
 async function loadData(){
   DEMO = false;
   try{
-    const r = await fetch(withDev(API + '/app-data'), { headers: { 'X-Init-Data': initData() } });
+    const r = await fetchLimited(withDev(API + '/app-data'),
+                                 { headers: { 'X-Init-Data': initData() } }, 8000);
     if (r.ok) return await r.json();
     if (r.status === 401 && initData()) NEEDS_START = true;
     DEMO_REASON = r.status === 401
       ? (DEV ? 'сервер не знает этот dev_id' : 'нужна регистрация в боте')
       : 'сервер ответил ошибкой ' + r.status;
   }catch(e){
-    DEMO_REASON = 'нет связи с сервером';
+    DEMO_REASON = (e && e.name === 'AbortError') ? 'сервер не ответил за 8 секунд'
+                                                 : 'нет связи с сервером';
+    OFFLINE = true;
     console.error('Union Poker:', e);
   }
   DEMO = true;
   return MOCK;
 }
 async function apiPost(path, body){
-  const r = await fetch(withDev(API + path), {
+  const r = await fetchLimited(withDev(API + path), {
     method:'POST', headers:{'Content-Type':'application/json','X-Init-Data': initData()},
     body: JSON.stringify(body||{})
-  });
+  }, 10000);
   return await r.json();
 }
 
@@ -619,6 +638,21 @@ function renderRules(){
   $('rulesList').innerHTML = (DATA.rules||[]).map(r => '<li>' + esc(r) + '</li>').join('');
 }
 
+/* ---------- нет связи ---------- */
+function showOffline(){
+  document.querySelector('.up-tabbar').style.display = 'none';
+  document.querySelector('.app').innerHTML =
+    '<div class="up-header"><div class="up-logo"></div>' +
+      '<div class="up-wordmark"><b>UNION</b><small>POKER</small></div></div>' +
+    '<div class="up-card" style="text-align:center;padding:26px 20px;margin-top:8px">' +
+      '<div style="font:400 22px/1.2 var(--up-font-display);color:var(--up-gold-text);margin-bottom:8px">' +
+        'Нет связи с клубом</div>' +
+      '<p class="up-muted" style="font-size:14px;line-height:1.5;margin:0 0 16px">' +
+        esc(DEMO_REASON) + '. Проверьте интернет и попробуйте ещё раз.</p>' +
+      '<button class="up-btn up-btn--gold up-btn--block" onclick="location.reload()">Повторить</button>' +
+    '</div>';
+}
+
 /* ---------- регистрация в клубе ---------- */
 function tgUser(){
   try { return (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || null; } catch (e) { return null; }
@@ -777,6 +811,8 @@ async function start(){
   renderAll();
 
   if (NEEDS_START) { showSignup(); return; }
+
+  if (OFFLINE) { showOffline(); return; }
 
   if (DEMO) {
     const d = document.createElement('div');
