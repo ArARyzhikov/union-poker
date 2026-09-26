@@ -35,6 +35,17 @@
   .live .seat{margin-left:auto;text-align:right;font:400 22px/1 var(--up-font-display);color:var(--up-gold-text);white-space:nowrap;}
   .live .seat small{display:block;font:700 10px var(--up-font-ui);color:var(--up-muted);letter-spacing:.1em;margin-top:3px;}
 
+  /* быстрые кнопки под постером, как в макете */
+  .quick{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0 4px;}
+  .quick div{background:var(--up-surface);border:1px solid var(--up-line);border-radius:18px;
+             padding:11px 2px 9px;text-align:center;font:700 11px var(--up-font-ui);color:var(--up-ink);cursor:pointer;}
+  .quick i{display:grid;place-items:center;width:34px;height:34px;border-radius:12px;margin:0 auto 7px;}
+  .quick svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;}
+  .quick .i1{background:rgba(212,175,90,.14);color:var(--up-gold-text);}
+  .quick .i2{background:var(--up-ok-bg);color:var(--up-ok);}
+  .quick .i3{background:rgba(212,175,90,.14);color:var(--up-gold-text);}
+  .quick .i4{background:var(--up-bad-bg);color:var(--up-bad);}
+
   /* строка афиши в компактном виде */
   .ev{display:flex;align-items:center;gap:12px;background:var(--up-surface);border:1.5px solid var(--up-line);
       border-radius:var(--up-r-lg);padding:11px 13px;margin-bottom:8px;cursor:pointer;}
@@ -116,6 +127,14 @@
   <section class="screen screen--on" id="sc-home">
     <div id="liveBox"></div>
     <div class="up-card hero" id="heroCard"></div>
+
+    <div class="quick">
+      <div data-go="afisha"><i class="i1"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></i>Афиша</div>
+      <div data-go="event" data-part="players"><i class="i2"><svg viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M12 8v8"/></svg></i>Участники</div>
+      <div data-go="rating"><i class="i3"><svg viewBox="0 0 24 24"><path d="M5 20V11M12 20V4M19 20v-6"/></svg></i>Рейтинг</div>
+      <div data-go="rules"><i class="i4"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg></i>Клуб</div>
+    </div>
+
     <div id="homeNext"></div>
     <div class="up-section"><b>Мои показатели</b><a href="#p" data-go="profile">Профиль</a></div>
     <div class="up-grid-3" id="myStats"></div>
@@ -297,10 +316,33 @@ async function apiPost(path, body){
 }
 
 /* ---------- кусочки интерфейса ---------- */
+/* Украшение постера: кольца и карты, как в макете клуба.
+   Рисуется на CSS, без картинок — грузится мгновенно и не зависит от сети. */
+function pk(rank, suit, red, style){
+  return '<div class="up-pk' + (red ? ' up-pk--red' : '') + '" style="' + style + '">' +
+         '<span class="r">' + rank + '</span><span class="s">' + suit + '</span></div>';
+}
+function posterArt(theme){
+  if (theme === 'up-poster--green') {
+    return '<div class="up-chip-art" style="--c:#C99A3A;--e:#F5DC93;right:8cqw;top:15cqw"></div>' +
+           '<div class="up-chip-art" style="--c:#141110;--e:#D4AF5A;right:-5cqw;top:28cqw"></div>' +
+           '<div class="up-chip-art" style="--c:#F1E7CB;--e:#141110;right:22cqw;top:33cqw"></div>';
+  }
+  if (theme === 'up-poster--wine') {
+    return '<i class="up-ring" style="right:-18cqw;top:-16cqw;width:70cqw;height:70cqw"></i>' +
+           pk('7', '♦', 1, 'right:-2cqw;top:20cqw;transform:rotate(13deg)') +
+           pk('7', '♣', 0, 'right:21cqw;top:24cqw;transform:rotate(-12deg)');
+  }
+  return '<i class="up-ring" style="right:-20cqw;top:-12cqw;width:82cqw;height:82cqw"></i>' +
+         '<i class="up-ring up-ring--thin" style="right:-6cqw;top:2cqw;width:56cqw;height:56cqw"></i>' +
+         pk('A', '♠', 0, 'right:-3cqw;top:24cqw;transform:rotate(16deg)') +
+         pk('K', '♥', 1, 'right:20cqw;top:19cqw;transform:rotate(-10deg)');
+}
 function poster(t, extra){
   const n = String(t.title || '').length;
   const size = n > 26 ? ' up-poster--xlong' : n > 14 ? ' up-poster--long' : '';
   return '<div class="up-poster ' + (t.theme||'') + size + ' ' + (extra||'') + '">' +
+    posterArt(t.theme) +
     '<div class="up-poster__tag">' + esc(t.tag || (t.date + ' · ' + t.time)) + '</div>' +
     '<div class="up-poster__logo">UNION POKER</div>' +
     '<div class="up-poster__title">' + esc(t.title) + '</div>' +
@@ -436,7 +478,7 @@ function renderAfisha(){
     return;
   }
   $('afishaList').innerHTML = all.map((t, i) => i === 0
-    ? '<div class="up-card" style="padding:6px" data-open="' + t.id + '">' + poster(t) +
+    ? '<div class="up-card hero" data-open="' + t.id + '">' + poster(t) +
       '<div class="hero__bar"><div class="txt"><b>' + esc(t.weekday + ', ' + t.date + ' · ' + t.time) + '</b>' +
       '<div class="up-row__sub">' + t.taken + '/' + t.seats + ' мест · вход ' + fmt(t.buyin) + ' ₽</div></div>' +
       regButton(t, true) + '</div></div>'
@@ -447,7 +489,7 @@ function renderEvent(){
   const t = current();
   if (!t) return;
   $('eventTop').innerHTML =
-    '<div class="up-card" style="padding:6px">' + poster(t) + '</div>' +
+    '<div class="up-card hero">' + poster(t) + '</div>' +
     '<div class="up-grid-2" style="margin-top:12px">' +
       '<div class="up-tile"><b>' + t.taken + '/' + t.seats + '</b><small>ЗАПИСАНО</small></div>' +
       '<div class="up-tile"><b>' + fmt(t.stack) + '</b><small>СТАРТОВЫЙ СТЕК</small></div>' +
@@ -574,7 +616,16 @@ function go(name){
 
 document.addEventListener('click', async e => {
   const nav = e.target.closest('[data-go]');
-  if (nav) { e.preventDefault(); go(nav.dataset.go); return; }
+  if (nav) {
+    e.preventDefault();
+    if (nav.dataset.go === 'event') {
+      if (!CUR && list().length) CUR = list()[0].id;
+      PART = nav.dataset.part || 'info';
+      renderEvent();
+    }
+    go(nav.dataset.go);
+    return;
+  }
 
   const reg = e.target.closest('[data-reg]');
   if (reg) { e.stopPropagation(); await onRegister(+reg.dataset.reg); return; }

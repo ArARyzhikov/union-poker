@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Union Poker — проверка</title>
+<style>
+  body{margin:0;padding:14px;background:#0B0A08;color:#F4ECD8;
+       font:600 14px/1.5 system-ui,-apple-system,sans-serif;}
+  h1{font-size:17px;margin:0 0 12px;color:#E8C56E;}
+  .row{padding:8px 10px;border-radius:10px;background:#15130E;margin-bottom:6px;
+       border:1px solid #2A2418;word-break:break-word;white-space:pre-wrap;}
+  .ok{border-color:#2E6B4F;color:#9BE3BF;}
+  .bad{border-color:#7A3340;color:#FFB3C0;}
+  b{color:#E8C56E;}
+</style>
+</head>
+<body>
+<h1>Проверка приложения</h1>
+<div id="log"></div>
+
+<script>
+var log = document.getElementById('log');
+function say(text, cls){
+  var d = document.createElement('div');
+  d.className = 'row' + (cls ? ' ' + cls : '');
+  d.textContent = text;
+  log.appendChild(d);
+}
+
+window.onerror = function(msg, src, line){
+  say('ОШИБКА СКРИПТА: ' + msg + ' (строка ' + line + ')', 'bad');
+};
+
+say('1. Страница открылась и скрипт запустился', 'ok');
+say('2. Адрес: ' + location.href);
+
+try {
+  var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+  if (tg) {
+    say('3. Telegram найден. Подпись: ' + (tg.initData ? (tg.initData.length + ' символов') : 'ПУСТО'),
+        tg.initData ? 'ok' : 'bad');
+    say('   версия клиента: ' + (tg.version || '?') + ', платформа: ' + (tg.platform || '?'));
+  } else {
+    say('3. Telegram НЕ найден — открыто вне бота либо скрипт Telegram не загрузился', 'bad');
+  }
+} catch (e) {
+  say('3. Ошибка при обращении к Telegram: ' + e.message, 'bad');
+}
+
+var t0 = Date.now();
+say('4. Отправляю запрос к серверу...');
+
+try {
+  var tgi = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) || '';
+  fetch('/api/app-data', { headers: { 'X-Init-Data': tgi } })
+    .then(function(r){
+      say('5. Ответ за ' + (Date.now() - t0) + ' мс, код ' + r.status, r.ok ? 'ok' : 'bad');
+      return r.text();
+    })
+    .then(function(t){
+      say('6. Размер ответа: ' + t.length + ' символов');
+      say('7. Начало ответа: ' + t.slice(0, 220));
+      try {
+        var d = JSON.parse(t);
+        say('8. Разобрано. Игрок: ' + (d.me ? d.me.name : 'НЕТ ПОЛЯ me') +
+            ', турниров в афише: ' + (d.tournaments ? d.tournaments.length : 'НЕТ ПОЛЯ'),
+            d.me ? 'ok' : 'bad');
+      } catch (e) {
+        say('8. Не удалось разобрать ответ: ' + e.message, 'bad');
+      }
+    })
+    .catch(function(e){
+      say('5. Запрос не дошёл: ' + e.message, 'bad');
+    });
+} catch (e) {
+  say('4. fetch не поддерживается: ' + e.message, 'bad');
+}
+
+setTimeout(function(){
+  var img = new Image();
+  img.onload = function(){ say('9. Внешние ресурсы (telegram.org) доступны', 'ok'); };
+  img.onerror = function(){ say('9. telegram.org недоступен — это нормально, приложение не должно от него зависеть'); };
+  img.src = 'https://telegram.org/favicon.ico?x=' + Date.now();
+}, 300);
+</script>
+</body>
+</html>

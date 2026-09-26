@@ -209,11 +209,47 @@
 }
 .up-poster__meta{ position: absolute; left: 6cqw; bottom: 6cqw; max-width: 88cqw;
   font: 700 3.7cqw/1.25 var(--up-font-ui); opacity: .9; }
-.up-poster--long .up-poster__title{ font-size: 9.6cqw; bottom: 17cqw; max-width: 82cqw; }
-.up-poster--xlong .up-poster__title{ font-size: 7.6cqw; bottom: 17.5cqw; max-width: 86cqw; }
+.up-poster--long .up-poster__title{ font-size: 9.2cqw; bottom: 16cqw; max-width: 58cqw; }
+.up-poster--xlong .up-poster__title{ font-size: 7.4cqw; bottom: 16cqw; max-width: 58cqw; }
 .up-poster--green{ background: radial-gradient(100% 80% at 82% 16%, #14704F 0%, #0B3B2C 46%, #05130E 100%); }
 .up-poster--wine{ background: radial-gradient(100% 80% at 86% 8%, rgba(226,112,120,.32), transparent 56%),
                               linear-gradient(160deg, #4A1322 0%, #1B0810 70%, #0B0508 100%); }
+
+
+/* ---------- украшение постера: кольца, карты, фишки ---------- */
+/* Всё рисуется на CSS, без картинок — работает на любом устройстве и без сети. */
+.up-poster > .up-ring,
+.up-poster > .up-pk,
+.up-poster > .up-chip-art,
+.up-poster > .up-suit{ position: absolute; z-index: 0; }
+
+.up-ring{
+  border-radius: 50%;
+  border: 1.1cqw solid rgba(228,190,104,.6);
+  box-shadow: 0 0 6cqw rgba(212,175,90,.4), inset 0 0 4cqw rgba(212,175,90,.28);
+}
+.up-ring--thin{ border-width: .5cqw; box-shadow: none; border-color: rgba(228,190,104,.4); }
+
+.up-pk{
+  width: 30cqw; height: 42cqw; border-radius: 3.4cqw;
+  background: linear-gradient(160deg, #FCF6E4, #EADBB4);
+  color: #15110A;
+  box-shadow: 0 2cqw 5cqw rgba(0,0,0,.45);
+  font-family: var(--up-font-display);
+}
+.up-pk--red{ color: #B3243B; }
+.up-pk--dark{ background: #0C0B09; color: var(--up-gold-2); border: .35cqw solid rgba(232,197,110,.7); }
+.up-pk .r{ position: absolute; left: 3.4cqw; top: 3cqw; font-weight: 400; font-size: 6.4cqw; line-height: 1; }
+.up-pk .s{ position: absolute; inset: 0; display: grid; place-items: center; font-size: 17cqw;
+           font-family: "Segoe UI Symbol", "Apple Symbols", Arial, sans-serif; }
+
+.up-chip-art{
+  width: 17cqw; height: 17cqw; border-radius: 50%;
+  background: radial-gradient(circle at 50% 42%, var(--e) 0 34%, var(--c) 35% 100%);
+  border: 1.6cqw dashed var(--e);
+  box-shadow: 0 1.6cqw 4cqw rgba(0,0,0,.45);
+}
+.up-suit{ font: 400 1em/1 "Segoe UI Symbol", "Apple Symbols", Arial, sans-serif; }
 
 /* ---------- мелочи ---------- */
 .up-divider{ height: 1px; background: var(--up-line); border: 0; margin: 16px 0; }
