@@ -953,10 +953,20 @@ def is_admin(tg_id):
     return tg_id in CFG.get("admins", [])
 
 
-MENU = [[{"text": "🗓 Афиша"}, {"text": "👤 Мои данные"}],
-        [{"text": "ℹ️ О клубе"}, {"text": "📋 Структура"}]]
+def app_button():
+    """Кнопка, открывающая приложение клуба прямо в Telegram."""
+    if CFG.get("app_url"):
+        return [[{"text": "♠ Открыть приложение клуба", "web_app": {"url": CFG["app_url"]}}]]
+    return []
 
-CONTACT_KB = [[{"text": "📱 Поделиться номером", "request_contact": True}]]
+
+def welcome(p):
+    """Сообщение новому участнику клуба."""
+    if not p or not p["tg_id"]:
+        return
+    send(p["tg_id"], f"Добро пожаловать в <b>{CFG['club']}</b>, {p['name']}.\n"
+                     f"Вы участник клуба под номером <b>{p['number']}</b>.\n\n"
+                     "Запись на турниры — в приложении клуба, кнопка «Клуб» внизу.")
 
 
 def afisha_text(player_id=None):
@@ -979,18 +989,18 @@ def afisha_text(player_id=None):
     return "\n".join(out).strip()
 
 
-def afisha_buttons(player_id):
-    """Кнопка записи на каждый турнир ленты."""
-    rows = []
+def afisha_buttons(player_id=None):
+    """Кнопка приложения плюс быстрая запись прямо из чата — на случай,
+    если у игрока почему-то не открылось приложение."""
+    rows = app_button()
     for t in feed(5):
-        e = q("SELECT 1 FROM entries WHERE tid=? AND player_id=?", (t["id"], player_id), one=True)
+        e = (q("SELECT 1 FROM entries WHERE tid=? AND player_id=?", (t["id"], player_id), one=True)
+             if player_id else None)
         if e:
             rows.append([{"text": f"❌ Отменить · {t['date']}", "callback_data": f"un:{t['id']}"}])
         elif t["reg_open"]:
             rows.append([{"text": f"✅ Записаться · {t['date']}, {t['time']}",
                           "callback_data": f"re:{t['id']}"}])
-    if CFG.get("app_url"):
-        rows.append([{"text": "📱 Открыть приложение", "web_app": {"url": CFG["app_url"]}}])
     return rows
 
 
@@ -1020,7 +1030,8 @@ def handle_update(u):
         frm = cq["from"]
         p = q("SELECT * FROM players WHERE tg_id=?", (frm["id"],), one=True)
         if not p:
-            tg("answerCallbackQuery", callback_query_id=cq["id"], text="Сначала регистрация: /start")
+            tg("answerCallbackQuery", callback_query_id=cq["id"], show_alert=True,
+               text="Сначала зарегистрируйтесь в приложении клуба — кнопка «Клуб» внизу")
             return
         act, _, raw = (cq.get("data") or "").partition(":")
         t_id = int(raw) if raw.isdigit() else tid()
@@ -1047,61 +1058,19 @@ def handle_update(u):
     text = (m.get("text") or "").strip()
     player = q("SELECT * FROM players WHERE tg_id=?", (frm.get("id"),), one=True)
 
-    # --- контакт: завершение регистрации ---
+    # Если игрок прислал контакт — сохраняем номер. Отдельно просить его не нужно,
+    # регистрация происходит сама при первом открытии приложения.
     if "contact" in m:
         c = m["contact"]
-        if c.get("user_id") != frm.get("id"):
-            send(chat, "Пришлите, пожалуйста, свой номер — кнопкой ниже.", keyboard=CONTACT_KB)
-            return
-        name = " ".join(filter(None, [frm.get("first_name"), frm.get("last_name")])) or "Игрок"
-        p = save_player(frm["id"], name, frm.get("username"), c.get("phone_number"))
-        send(chat, f"Готово, {name}. Вы участник клуба под номером <b>{p['number']}</b>.\n"
-                   f"Теперь можно записаться на турнир.", keyboard=MENU)
-        send(chat, afisha_text(p["id"]), inline=afisha_buttons(p["id"]))
-        return
-
-    # --- команды ---
-    if text.startswith("/start"):
-        if player:
-            send(chat, f"С возвращением, {player['name']}.", keyboard=MENU)
-            send(chat, afisha_text(player["id"]), inline=afisha_buttons(player["id"]))
-        else:
-            send(chat, f"Добро пожаловать в <b>{CFG['club']}</b>.\n\n"
-                       "Играть в клубе можно после регистрации — так ведётся ваша статистика "
-                       "и рейтинг сезона.\n\nНажмите кнопку ниже, чтобы зарегистрироваться.",
-                 keyboard=CONTACT_KB)
+        if c.get("user_id") == frm.get("id"):
+            name = " ".join(filter(None, [frm.get("first_name"), frm.get("last_name")])) or "Игрок"
+            p = save_player(frm["id"], name, frm.get("username"), c.get("phone_number"))
+            send(chat, f"Номер сохранён. Вы участник клуба под номером <b>{p['number']}</b>.",
+                 inline=app_button())
         return
 
     if text == "/id":
         send(chat, f"Ваш Telegram ID: <code>{frm.get('id')}</code>")
-        return
-
-    if not player:
-        send(chat, "Сначала регистрация — нажмите кнопку.", keyboard=CONTACT_KB)
-        return
-
-    if text.startswith("🗓") or text == "/afisha":
-        send(chat, afisha_text(player["id"]), inline=afisha_buttons(player["id"]))
-        return
-
-    if text.startswith("👤") or text == "/me":
-        s = player_stats(player["id"])
-        rank = my_rank(player["id"])
-        send(chat, f"<b>{player['name']}</b>\n"
-                   f"Номер участника: {player['number']}\n"
-                   f"Турниров сыграно: {s['games']}\n"
-                   f"Очков рейтинга: {s['points']}\n"
-                   f"Место в рейтинге: {rank or '—'}")
-        return
-
-    if text.startswith("ℹ️") or text == "/about":
-        send(chat, f"<b>{CFG['club']}</b>\nКлуб спортивного покера. Москва.\n"
-                   "Good players · Better people.\n\n"
-                   "Играем по правилам спортивного покера, призы — очки рейтинга сезона.")
-        return
-
-    if text.startswith("📋") or text == "/structure":
-        send(chat, structure_text())
         return
 
     # --- админ ---
@@ -1131,8 +1100,28 @@ def handle_update(u):
                 time.sleep(0.05)
             send(chat, f"Отправлено: {n}")
             return
+        if text == "/afisha_all":
+            # рассылка афиши всем участникам клуба
+            n = 0
+            for r in q("SELECT id, tg_id FROM players WHERE tg_id IS NOT NULL"):
+                if send(r["tg_id"], afisha_text(r["id"]), inline=afisha_buttons(r["id"])):
+                    n += 1
+                time.sleep(0.05)
+            send(chat, f"Афиша отправлена: {n}")
+            return
 
-    send(chat, "Выберите пункт меню.", keyboard=MENU)
+    # --- всем остальным: приветствие, кнопка приложения и афиша ---
+    if not player:
+        send(chat, f"<b>{CFG['club']}</b> — клуб спортивного покера. Москва.\n"
+                   "Good players · Better people.\n\n"
+                   "Чтобы записываться на турниры, откройте приложение клуба и "
+                   "пройдите короткую регистрацию — это займёт десять секунд.",
+             inline=app_button())
+    else:
+        send(chat, f"С возвращением, {player['name']}.", inline=app_button())
+
+    pid = player["id"] if player else None
+    send(chat, afisha_text(pid), inline=afisha_buttons(pid))
 
 
 def bot_loop():
@@ -1155,11 +1144,13 @@ def bot_loop():
         return
     print(f"Бот запущен: @{me['result']['username']}")
     tg("setMyCommands", commands=[
-        {"command": "start", "description": "Регистрация и меню"},
-        {"command": "afisha", "description": "Афиша клуба"},
-        {"command": "me", "description": "Мои данные"},
-        {"command": "structure", "description": "Структура турнира"},
+        {"command": "start", "description": "Клуб и афиша"},
     ])
+    if CFG.get("app_url"):
+        tg("setChatMenuButton", menu_button={
+            "type": "web_app", "text": "Клуб",
+            "web_app": {"url": CFG["app_url"]}
+        })
     offset = 0
     while True:
         try:
@@ -1195,8 +1186,7 @@ def check_init_data(init_data):
         calc = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(calc, got_hash):
             return None
-        user = json.loads(data.get("user", "{}"))
-        return user.get("id")
+        return json.loads(data.get("user", "{}")) or None
     except Exception:
         return None
 
@@ -1262,8 +1252,9 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     def who(self):
-        """Определяет игрока, открывшего приложение."""
-        tg_id = check_init_data(self.headers.get("X-Init-Data"))
+        """Определяет игрока, открывшего приложение. Незнакомого — сразу регистрирует."""
+        u = check_init_data(self.headers.get("X-Init-Data"))
+        tg_id = u.get("id") if u else None
         if tg_id is None and CFG.get("dev"):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             if "dev_id" in qs:
@@ -1274,6 +1265,10 @@ class Handler(BaseHTTPRequestHandler):
         if tg_id is None:
             return None
         return q("SELECT * FROM players WHERE tg_id=?", (tg_id,), one=True)
+
+    def tg_user(self):
+        """Данные Telegram того, кто открыл приложение (даже если он ещё не участник)."""
+        return check_init_data(self.headers.get("X-Init-Data"))
 
     def admin_ok(self):
         key = self.headers.get("X-Admin-Key")
@@ -1387,6 +1382,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
         body = self.body_json()
+
+        if path == "/api/signup":
+            u = self.tg_user()
+            if not u:
+                return self.json_out({"ok": False, "message": "Откройте приложение из бота"}, 401)
+            phone = norm_phone(body.get("phone"))
+            if not phone or len(phone) < 12:
+                return self.json_out({"ok": False, "message": "Неверный номер телефона"})
+            name = (body.get("name") or "").strip() or \
+                " ".join(filter(None, [u.get("first_name"), u.get("last_name")])) or "Игрок"
+            p = save_player(u["id"], name, u.get("username"), phone)
+            welcome(p)
+            return self.json_out({"ok": True, "message": "Добро пожаловать в клуб",
+                                  "number": p["number"]})
 
         if path == "/api/register":
             p = self.who()

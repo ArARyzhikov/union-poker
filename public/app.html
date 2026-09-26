@@ -224,10 +224,22 @@ function showError(e){
 window.addEventListener('error', ev => showError(ev.error || ev.message));
 window.addEventListener('unhandledrejection', ev => showError(ev.reason));
 
+/* Подпись Telegram приходит прямо в адресе страницы (#tgWebAppData=...).
+   Читаем её сами — тогда приложение не ждёт загрузки скрипта telegram.org. */
+function initDataFromUrl(){
+  try {
+    const raw = (location.hash || '').replace(/^#/, '');
+    if (!raw) return '';
+    return new URLSearchParams(raw).get('tgWebAppData') || '';
+  } catch (e) { return ''; }
+}
+let INIT = initDataFromUrl();
+function initData(){ return (tg && tg.initData) || INIT || ''; }
+
 const API = (location.protocol === 'file:') ? 'http://localhost:8080/api' : '/api';
 const DEV = new URLSearchParams(location.search).get('dev_id');
 const withDev = p => DEV ? p + (p.includes('?') ? '&' : '?') + 'dev_id=' + DEV : p;
-let DEMO = false, DEMO_REASON = '', DATA = null, PART = 'info', CUR = 0;
+let DEMO = false, DEMO_REASON = '', DATA = null, PART = 'info', CUR = 0, NEEDS_START = false;
 
 const MOCK = {
   club: 'Union Poker',
@@ -295,10 +307,11 @@ function current(){ return byId(CUR) || list()[0]; }
 async function loadData(){
   DEMO = false;
   try{
-    const r = await fetch(withDev(API + '/app-data'), { headers: { 'X-Init-Data': (tg && tg.initData) || '' } });
+    const r = await fetch(withDev(API + '/app-data'), { headers: { 'X-Init-Data': initData() } });
     if (r.ok) return await r.json();
+    if (r.status === 401 && initData()) NEEDS_START = true;
     DEMO_REASON = r.status === 401
-      ? (DEV ? 'сервер не знает этот dev_id' : 'откройте из бота')
+      ? (DEV ? 'сервер не знает этот dev_id' : 'нужна регистрация в боте')
       : 'сервер ответил ошибкой ' + r.status;
   }catch(e){
     DEMO_REASON = 'нет связи с сервером';
@@ -309,7 +322,7 @@ async function loadData(){
 }
 async function apiPost(path, body){
   const r = await fetch(withDev(API + path), {
-    method:'POST', headers:{'Content-Type':'application/json','X-Init-Data':(tg && tg.initData)||''},
+    method:'POST', headers:{'Content-Type':'application/json','X-Init-Data': initData()},
     body: JSON.stringify(body||{})
   });
   return await r.json();
@@ -606,6 +619,82 @@ function renderRules(){
   $('rulesList').innerHTML = (DATA.rules||[]).map(r => '<li>' + esc(r) + '</li>').join('');
 }
 
+/* ---------- регистрация в клубе ---------- */
+function tgUser(){
+  try { return (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || null; } catch (e) { return null; }
+}
+function showSignup(){
+  const u = tgUser();
+  const name = u ? [u.first_name, u.last_name].filter(Boolean).join(' ') : '';
+  const canContact = !!(tg && typeof tg.requestContact === 'function');
+
+  document.querySelector('.up-tabbar').style.display = 'none';
+  document.querySelector('.app').innerHTML =
+    '<div class="up-header"><div class="up-logo"></div>' +
+      '<div class="up-wordmark"><b>UNION</b><small>POKER</small></div></div>' +
+    '<div class="up-card" style="padding:20px 18px;margin-top:8px">' +
+      '<div style="font:400 24px/1.15 var(--up-font-display);color:var(--up-gold-text);margin-bottom:8px">' +
+        'Регистрация в клубе</div>' +
+      '<p class="up-muted" style="font-size:14px;line-height:1.5;margin:0 0 16px">' +
+        'Один человек — один профиль. По номеру телефона мы узнаём вас на входе ' +
+        'и ведём вашу статистику и рейтинг сезона.</p>' +
+      '<div class="up-field"><label class="up-label">Имя и фамилия</label>' +
+        '<input class="up-input" id="suName" type="text" value="' + esc(name) + '" ' +
+        'placeholder="Как вас объявлять за столом"></div>' +
+      '<div class="up-field" style="margin-top:12px"><label class="up-label">Телефон</label>' +
+        '<input class="up-input" id="suPhone" type="tel" inputmode="tel" placeholder="+7 900 000-00-00"></div>' +
+      (canContact
+        ? '<button class="up-btn up-btn--soft up-btn--block" id="suContact" style="margin-top:12px">' +
+          'Подставить номер из Telegram</button>'
+        : '') +
+      '<button class="up-btn up-btn--gold up-btn--block" id="suGo" style="margin-top:12px">' +
+        'Вступить в клуб</button>' +
+      '<div class="up-row__sub" id="suHint" style="margin-top:10px;text-align:center"></div>' +
+    '</div>';
+
+  const hint = t => { $('suHint').textContent = t || ''; };
+
+  if (canContact) {
+    $('suContact').onclick = () => {
+      hint('Подтвердите отправку номера в Telegram...');
+      try {
+        tg.requestContact(function(ok){
+          if (!ok) { hint('Номер не отправлен — впишите его вручную'); return; }
+          hint('Номер получен, заканчиваем регистрацию...');
+          waitForProfile(0);
+        });
+      } catch (e) { hint('Не получилось, впишите номер вручную'); }
+    };
+  }
+
+  $('suGo').onclick = async () => {
+    const phone = ($('suPhone').value || '').trim();
+    const nm = ($('suName').value || '').trim();
+    if (phone.replace(/\D/g, '').length < 10) { hint('Проверьте номер телефона'); return; }
+    $('suGo').disabled = true; hint('Отправляю...');
+    try {
+      const res = await apiPost('/signup', { phone: phone, name: nm });
+      if (res.ok) { hint('Готово! Открываю клуб...'); setTimeout(restart, 400); }
+      else { hint(res.message || 'Не получилось'); $('suGo').disabled = false; }
+    } catch (e) { hint('Нет связи с сервером'); $('suGo').disabled = false; }
+  };
+}
+
+// после отправки контакта боту ждём, пока профиль появится на сервере
+async function waitForProfile(tries){
+  if (tries > 12) { $('suHint').textContent = 'Долго нет ответа — впишите номер вручную'; return; }
+  try {
+    const fresh = await loadData();
+    if (fresh && fresh.me) { DATA = fresh; restart(); return; }
+  } catch (e) {}
+  setTimeout(() => waitForProfile(tries + 1), 1000);
+}
+
+function restart(){
+  NEEDS_START = false;
+  location.reload();
+}
+
 /* ---------- навигация ---------- */
 function go(name){
   document.querySelectorAll('.screen').forEach(s => s.classList.toggle('screen--on', s.id === 'sc-' + name));
@@ -686,6 +775,8 @@ async function start(){
   if (DEMO && u) DATA.me.name = [u.first_name, u.last_name].filter(Boolean).join(' ') || DATA.me.name;
   $('me').textContent = initials(DATA.me.name);
   renderAll();
+
+  if (NEEDS_START) { showSignup(); return; }
 
   if (DEMO) {
     const d = document.createElement('div');
