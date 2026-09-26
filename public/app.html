@@ -1,4 +1,7 @@
 <title>Union Poker Mini App</title>
+<!-- Скрипт Telegram: через него приложение узнаёт, кто его открыл.
+     Внутри Telegram он есть всегда; в обычном браузере просто не загрузится. -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Forum&family=Manrope:wght@500;600;700;800&display=swap">
 <link rel="stylesheet" href="union-poker-ui.css">
 <style>
@@ -591,9 +594,31 @@ function renderAll(){
   if ($('sc-event').classList.contains('screen--on')) renderEvent();
 }
 
+/* ---------- показ ошибок прямо на экране ---------- */
+function showError(e){
+  const msg = (e && e.message) ? e.message : String(e);
+  let d = document.getElementById('errBox');
+  if (!d) {
+    d = document.createElement('div');
+    d.id = 'errBox';
+    d.style.cssText = 'position:fixed;left:8px;right:8px;top:8px;z-index:60;background:#2A1113;' +
+      'border:1px solid #E0687A;color:#FFD9DE;padding:10px 12px;border-radius:12px;' +
+      'font:600 12px/1.45 system-ui,sans-serif;white-space:pre-wrap;max-height:50vh;overflow:auto';
+    document.body.appendChild(d);
+  }
+  d.textContent = 'Ошибка приложения:\n' + msg;
+}
+window.addEventListener('error', ev => showError(ev.error || ev.message));
+window.addEventListener('unhandledrejection', ev => showError(ev.reason));
+
 /* ---------- старт ---------- */
 (async function start(){
+  try {
   DATA = await loadData();
+  if (!DATA || !DATA.me || !DATA.tournaments) {
+    DEMO = true; DEMO_REASON = 'сервер прислал неполные данные';
+    DATA = MOCK;
+  }
   const u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
   if (DEMO && u) DATA.me.name = [u.first_name, u.last_name].filter(Boolean).join(' ') || DATA.me.name;
   $('me').textContent = initials(DATA.me.name);
@@ -607,7 +632,11 @@ function renderAll(){
     document.body.appendChild(d);
   } else {
     // пока приложение открыто, тихо обновляем данные
-    setInterval(async () => { DATA = await loadData(); renderAll(); }, 20000);
+    setInterval(async () => {
+      try { const fresh = await loadData(); if (fresh && fresh.me) { DATA = fresh; renderAll(); } }
+      catch (e) { console.error(e); }
+    }, 20000);
   }
+  } catch (e) { showError(e); }
 })();
 </script>
