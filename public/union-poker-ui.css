@@ -48,7 +48,10 @@
   line-height: 1.5;
 }
 .up-page{ max-width: 560px; margin: 0 auto; padding: 0 14px; }
-.up *, .up-page *{ box-sizing: border-box; }
+/* Ширина считается вместе с отступами и рамкой — иначе поля ввода вылезают
+   за край контейнера. Правило общее: страницы клуба не оборачиваются
+   в один общий блок, и привязывать его к классу нельзя. */
+*, *::before, *::after{ box-sizing: border-box; }
 
 .up-display{ font-family: var(--up-font-display); font-weight: 400; letter-spacing: .01em; }
 .up-h1{ font: 400 28px/1.1 var(--up-font-display); margin: 0; }
