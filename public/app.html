@@ -1,3 +1,4 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Union Poker Mini App</title>
 <!-- Скрипт Telegram: через него приложение узнаёт, кто его открыл.
      Внутри Telegram он есть всегда; в обычном браузере просто не загрузится. -->
@@ -34,6 +35,30 @@
   .live small{color:var(--up-muted);font-size:12.5px;}
   .live .seat{margin-left:auto;text-align:right;font:400 22px/1 var(--up-font-display);color:var(--up-gold-text);white-space:nowrap;}
   .live .seat small{display:block;font:700 10px var(--up-font-ui);color:var(--up-muted);letter-spacing:.1em;margin-top:3px;}
+
+  /* приглашение для гостя: афишу видно всем, запись — после регистрации */
+  #guestBar{position:fixed;left:0;right:0;bottom:calc(74px + env(safe-area-inset-bottom,0px));
+            z-index:25;margin:0 auto;max-width:560px;padding:13px 16px 14px;
+            background:linear-gradient(150deg,#2A2110,#14110A);
+            border:1.5px solid rgba(212,175,90,.55);border-radius:20px;
+            box-shadow:0 12px 34px rgba(0,0,0,.55);}
+  #guestBar .gb__t{font-weight:800;font-size:15px;}
+  #guestBar .gb__s{color:var(--up-muted);font-size:12.5px;font-weight:600;margin:3px 0 10px;}
+
+  /* финальный стол: девять боксов с именами */
+  .fin{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
+       border-radius:var(--up-r-lg);padding:13px 14px;margin-bottom:12px;}
+  .fin__h{font:400 19px/1 var(--up-font-display);color:var(--up-gold-text);margin-bottom:4px;}
+  .fin__s{color:var(--up-muted);font-size:12.5px;font-weight:600;margin-bottom:11px;}
+  .fin__g{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;}
+  .box{background:rgba(255,255,255,.04);border:1px solid var(--up-line);border-radius:13px;
+       padding:9px 8px;min-height:54px;display:flex;flex-direction:column;justify-content:center;}
+  .box i{font:700 9.5px var(--up-font-ui);color:var(--up-muted);letter-spacing:.12em;
+         font-style:normal;display:block;margin-bottom:3px;}
+  .box b{font-size:12.5px;font-weight:800;line-height:1.25;word-break:break-word;}
+  .box.me{border-color:var(--up-gold);background:rgba(212,175,90,.12);}
+  .box--free{opacity:.4;}
+  .box--free b{font-weight:600;}
 
   /* быстрые кнопки под постером, как в макете */
   .quick{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0 4px;}
@@ -136,7 +161,7 @@
     </div>
 
     <div id="homeNext"></div>
-    <div class="up-section"><b>Мои показатели</b><a href="#p" data-go="profile">Профиль</a></div>
+    <div class="up-section" id="myStatsHead"><b>Мои показатели</b><a href="#p" data-go="profile">Профиль</a></div>
     <div class="up-grid-3" id="myStats"></div>
     <div class="up-section"><b>Правила клуба</b><a href="#r" data-go="rules">Все</a></div>
     <div id="homeRules"></div>
@@ -240,7 +265,7 @@ const API = (location.protocol === 'file:') ? 'http://localhost:8080/api' : '/ap
 const DEV = new URLSearchParams(location.search).get('dev_id');
 const withDev = p => DEV ? p + (p.includes('?') ? '&' : '?') + 'dev_id=' + DEV : p;
 let DEMO = false, DEMO_REASON = '', DATA = null, PART = 'info', CUR = 0,
-    NEEDS_START = false, OFFLINE = false;
+    NEEDS_START = false, OFFLINE = false, GUEST = false;
 
 const MOCK = {
   club: 'Union Poker',
@@ -250,17 +275,17 @@ const MOCK = {
                        {icon:'♛',title:'Победа в турнире',done:false}] },
   tournaments: [
     { id: 1, title: 'Демо-день клуба', date: '27 сентября', weekday: 'вс', time: '18:00',
-      when: 'завтра в 18:00', tag: '27 сен · 18:00', buyin: 2000, reentry: 2000, addon: 0,
+      when: 'завтра в 18:00', tag: '27 сен · 18:00', buyin: 1500, reentry: 1500, addon: 1500,
       stack: 25000, seats: 36, taken: 14, free: 22, waiting: 0, theme: '',
-      meta: "Hold'em · стек 25 000 · вход 2000 ₽", status: 'open', starts_in: 1600,
+      meta: "Hold'em · 4 стола · вход 1500 ₽", status: 'open', starts_in: 1600,
       reg_open: true, can_cancel: true, late: false,
       registered: false, wait: false, wait_no: 0, arrived: false, busted: false,
       place: 0, table: 0, seat: 0,
       players: ['Максим Королёв','Дмитрий Соколов','Иван Попов'], waitlist: [] },
     { id: 2, title: 'Вечерний турнир', date: '3 октября', weekday: 'сб', time: '18:00',
-      when: 'в субботу, 3 октября, в 18:00', tag: '3 окт · 18:00', buyin: 2000, reentry: 2000,
-      addon: 0, stack: 25000, seats: 36, taken: 4, free: 32, waiting: 0, theme: '',
-      meta: "Hold'em · стек 25 000 · вход 2000 ₽", status: 'open', starts_in: 11000,
+      when: 'в субботу, 3 октября, в 18:00', tag: '3 окт · 18:00', buyin: 1500, reentry: 1500,
+      addon: 1500, stack: 25000, seats: 36, taken: 4, free: 32, waiting: 0, theme: '',
+      meta: "Hold'em · 4 стола · вход 1500 ₽", status: 'open', starts_in: 11000,
       reg_open: true, can_cancel: true, late: false,
       registered: true, wait: false, wait_no: 0, arrived: false, busted: false,
       place: 0, table: 0, seat: 0, players: ['Иван Попов'], waitlist: [] }
@@ -269,10 +294,10 @@ const MOCK = {
   structure: { levels: [[100,200,200],[200,400,400],[300,600,600],[400,800,800],[500,1000,1000],
                         'перерыв 10',[1000,2000,2000],[1500,3000,3000]],
                minutes: 10, stack: 25000, chips: [[25,100],[5,500],[10,1000],[2,5000]],
-               late_levels: 10, late_minutes: 110, final_at: 9 },
+               late_levels: 15, late_minutes: 185, final_at: 9 },
   rules: ['Играть можно только после регистрации в боте клуба',
           'Стартовый стек 25 000, уровни по 10 минут',
-          'Ре-энтри и поздняя регистрация — до конца 10 уровня'],
+          'Вход и ребай — до конца 15 уровня, потом аддон-тайм'],
   rating: [{place:1,name:'Максим Королёв',games:19,points:1820},{place:2,name:'Дмитрий Соколов',games:21,points:1640},
            {place:7,name:'Алексей Иванов',games:27,points:1190,me:true}],
   history: [{date:'20 сентября',title:'Воскресный турнир',place:4,of:32,points:61}]
@@ -326,7 +351,14 @@ async function loadData(){
     const r = await fetchLimited(withDev(API + '/app-data'),
                                  { headers: { 'X-Init-Data': initData() } }, 8000);
     if (r.ok) return await r.json();
-    if (r.status === 401 && initData()) NEEDS_START = true;
+    if (r.status === 401) {
+      if (initData()) NEEDS_START = true;
+      // Афиша открыта для всех: показываем настоящую, а не пример.
+      try{
+        const a = await fetchLimited(withDev(API + '/afisha'), {}, 8000);
+        if (a.ok) { GUEST = true; return await a.json(); }
+      }catch(e){ console.error('Union Poker: афиша', e); }
+    }
     DEMO_REASON = r.status === 401
       ? (DEV ? 'сервер не знает этот dev_id' : 'нужна регистрация в боте')
       : 'сервер ответил ошибкой ' + r.status;
@@ -435,7 +467,12 @@ function regHint(t){
                   esc(s.hint) + '</div>' : '';
 }
 function seatsLine(t){
-  if (t.status === 'live') return 'Турнир идёт' + (t.free > 0 ? ' · можно зайти' : '');
+  if (t.status === 'live') {
+    if (t.stage === 'addon') return 'Идёт аддон-тайм · входа больше нет';
+    if (t.stage === 'play')  return 'Идёт игра · входа больше нет';
+    if (t.stage === 'final') return 'Финальный стол';
+    return 'Турнир идёт' + (t.free > 0 ? ' · можно зайти' : '');
+  }
   if (t.free <= 0) return 'Мест нет' + (t.waiting ? ' · в листе ожидания ' + t.waiting : '');
   return t.taken + ' из ' + t.seats + ' мест занято';
 }
@@ -462,10 +499,22 @@ function renderHome(){
   const mine = all.find(x => x.id === live.id) || t;
   if (live.status === 'live') {
     $('liveBox').innerHTML = '<div class="live"><span class="pulse"></span>' +
-      '<div><b>' + esc(live.title || 'Турнир идёт') + '</b><small>в игре ' + live.alive + ' ' +
+      '<div><b>' + esc(live.title || 'Турнир идёт') + '</b><small>' +
+      (live.stage_text ? esc(live.stage_text) + ' · ' : '') + 'в игре ' + live.alive + ' ' +
       plural(live.alive,'игрок','игрока','игроков') + '</small></div>' +
       (mine.table ? '<div class="seat">Стол ' + mine.table + '<small>МЕСТО ' + mine.seat + '</small></div>' : '') +
       '</div>';
+    if (live.stage === 'final' && (live.final || []).length) {
+      $('liveBox').innerHTML +=
+        '<div class="fin"><div class="fin__h">Финальный стол</div>' +
+        '<div class="fin__s">Остались ' + live.alive + ' ' +
+        plural(live.alive,'игрок','игрока','игроков') + ' — играют до победителя</div>' +
+        '<div class="fin__g">' + (live.final || []).map(b =>
+          '<div class="box' + (b.name ? '' : ' box--free') +
+          (b.number && DATA.me && b.number === DATA.me.number ? ' me' : '') + '">' +
+          '<i>МЕСТО ' + b.seat + '</i><b>' + (b.name ? esc(b.name) : 'свободно') + '</b></div>'
+        ).join('') + '</div></div>';
+    }
   } else { $('liveBox').innerHTML = ''; }
 
   $('heroCard').dataset.open = t.id;
@@ -481,11 +530,25 @@ function renderHome(){
       next.map(evRow).join('')
     : '';
 
-  $('myStats').innerHTML =
-    '<div class="up-tile"><b>' + DATA.me.tournaments + '</b><small>' +
-      plural(DATA.me.tournaments,'ТУРНИР','ТУРНИРА','ТУРНИРОВ') + '</small></div>' +
-    '<div class="up-tile"><b>' + (DATA.me.rank === '—' ? '—' : '#' + DATA.me.rank) + '</b><small>В РЕЙТИНГЕ</small></div>' +
-    '<div class="up-tile"><b>' + DATA.me.points + '</b><small>ОЧКОВ</small></div>';
+  // Гостю показываем условия турнира, а не свои нули.
+  if (GUEST) {
+    const st = DATA.structure || {};
+    $('myStatsHead').innerHTML = '<b>Условия турнира</b>';
+    $('myStats').className = 'up-grid-3';
+    $('myStats').innerHTML =
+      '<div class="up-tile"><b>' + fmt(t.buyin) + '</b><small>ВХОД, ₽</small></div>' +
+      '<div class="up-tile"><b>' + fmt(t.reentry) + '</b><small>РЕБАЙ, ₽</small></div>' +
+      (t.addon ? '<div class="up-tile"><b>' + fmt(t.addon) + '</b><small>АДДОН, ₽</small></div>' : '') +
+      '<div class="up-tile"><b>' + fmt(t.stack) + '</b><small>СТЕК</small></div>' +
+      '<div class="up-tile"><b>' + (st.minutes || 10) + '</b><small>МИН/УРОВЕНЬ</small></div>' +
+      '<div class="up-tile"><b>' + t.seats + '</b><small>МЕСТ</small></div>';
+  } else {
+    $('myStats').innerHTML =
+      '<div class="up-tile"><b>' + DATA.me.tournaments + '</b><small>' +
+        plural(DATA.me.tournaments,'ТУРНИР','ТУРНИРА','ТУРНИРОВ') + '</small></div>' +
+      '<div class="up-tile"><b>' + (DATA.me.rank === '—' ? '—' : '#' + DATA.me.rank) + '</b><small>В РЕЙТИНГЕ</small></div>' +
+      '<div class="up-tile"><b>' + DATA.me.points + '</b><small>ОЧКОВ</small></div>';
+  }
 
   $('homeRules').innerHTML = (DATA.rules||[]).slice(0,3).map(r =>
     '<div class="up-row"><div class="up-row__body"><div class="up-row__sub" style="color:var(--up-ink);font-size:14px">' +
@@ -536,13 +599,13 @@ function eventInfo(t){
   const rows = [
     ['Когда', t.when || (t.weekday + ', ' + t.date + ' · ' + t.time)],
     ['Вход', fmt(t.buyin) + ' ₽'],
-    ['Ре-энтри', t.reentry ? fmt(t.reentry) + ' ₽' : 'нет'],
+    ['Ребай', t.reentry ? fmt(t.reentry) + ' ₽' : 'нет'],
   ];
   if (t.addon) rows.push(['Аддон', fmt(t.addon) + ' ₽']);
   rows.push(
     ['Стартовый стек', fmt(t.stack)],
     ['Уровень', s.minutes + ' минут'],
-    ['Поздняя запись и ре-энтри', 'до конца ' + s.late_levels + ' уровня'],
+    ['Вход и ребаи', 'до конца ' + s.late_levels + ' уровня'],
     ['Финальный стол', 'при ' + s.final_at + ' игроках'],
     ['Мест', t.taken + ' из ' + t.seats + (t.waiting ? ' · в листе ожидания ' + t.waiting : '')]
   );
@@ -575,8 +638,8 @@ function eventStruct(){
 
   return '<div class="lvl head"><span>Ур.</span><span>Малый</span><span>Большой</span><span>Анте</span></div>' + rows +
     '<p class="up-muted" style="font-size:13.5px;margin-top:12px">Каждый уровень — ' + s.minutes +
-    ' минут. Анте платит большой блайнд. Ре-энтри и поздняя регистрация — до конца ' +
-    s.late_levels + ' уровня, это ' + s.late_minutes + ' минут от старта. После этого входов нет.</p>' +
+    ' минут. Анте платит большой блайнд. Вход и ребаи открыты до конца ' +
+    s.late_levels + ' уровня. Дальше перерыв с аддоном, и начинается финальная стадия.</p>' +
     (chips ? '<div class="up-section"><b>Стартовый стек</b><span class="up-chip">' + fmt(s.stack) +
       '</span></div><div class="chips">' + chips + '</div>' : '');
 }
@@ -658,6 +721,8 @@ function tgUser(){
   try { return (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || null; } catch (e) { return null; }
 }
 function showSignup(){
+  const gb = document.getElementById('guestBar');
+  if (gb) gb.remove();
   const u = tgUser();
   const name = u ? [u.first_name, u.last_name].filter(Boolean).join(' ') : '';
   const canContact = !!(tg && typeof tg.requestContact === 'function');
@@ -718,8 +783,9 @@ function showSignup(){
 async function waitForProfile(tries){
   if (tries > 12) { $('suHint').textContent = 'Долго нет ответа — впишите номер вручную'; return; }
   try {
+    // ответ с афишей для гостя тоже содержит me — он не значит, что профиль готов
     const fresh = await loadData();
-    if (fresh && fresh.me) { DATA = fresh; restart(); return; }
+    if (fresh && fresh.me && !fresh.guest) { DATA = fresh; restart(); return; }
   } catch (e) {}
   setTimeout(() => waitForProfile(tries + 1), 1000);
 }
@@ -769,6 +835,8 @@ function ask(text){
 async function onRegister(id){
   const t = byId(id);
   if (!t) return;
+  if (GUEST) { showSignup(); return; }
+
   const s = regState(t);
   if (s.kind !== 'btn') return;
 
@@ -790,6 +858,17 @@ async function onRegister(id){
   renderAll();
 }
 
+function guestBar(){
+  if (document.getElementById('guestBar')) return;
+  const d = document.createElement('div');
+  d.id = 'guestBar';
+  d.innerHTML = '<div class="gb__t">Вы ещё не в клубе</div>' +
+    '<div class="gb__s">Регистрация занимает минуту — имя и номер телефона</div>' +
+    '<button class="up-btn up-btn--gold up-btn--block">Вступить в клуб</button>';
+  d.querySelector('button').onclick = () => showSignup();
+  document.body.appendChild(d);
+}
+
 function renderAll(){
   if (!CUR && list().length) CUR = list()[0].id;
   renderHome(); renderAfisha(); renderRating(); renderProfile(); renderRules();
@@ -809,6 +888,8 @@ async function start(){
   if (DEMO && u) DATA.me.name = [u.first_name, u.last_name].filter(Boolean).join(' ') || DATA.me.name;
   $('me').textContent = initials(DATA.me.name);
   renderAll();
+
+  if (GUEST) { guestBar(); return; }
 
   if (NEEDS_START) { showSignup(); return; }
 

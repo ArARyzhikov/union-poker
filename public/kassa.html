@@ -39,6 +39,29 @@
   .mi b{font-weight:800;}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--up-ok);box-shadow:0 0 8px var(--up-ok);}
   .dot.bad{background:var(--up-bad);box-shadow:0 0 8px var(--up-bad);}
+  /* полоса стадии турнира: ребай-период → аддон-тайм → финал */
+  .stage{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
+         border-radius:18px;padding:13px 15px;margin-bottom:12px;}
+  .stage .ttl{display:flex;align-items:center;gap:9px;font-weight:800;font-size:15.5px;}
+  .stage small{display:block;color:var(--up-muted);font-size:12.5px;font-weight:600;
+               margin-top:5px;line-height:1.45;}
+  .stage .up-btn{margin-top:11px;}
+  .stage .dot--wait{background:var(--up-gold);box-shadow:0 0 8px var(--up-gold);}
+  .stage .dot--fin{background:var(--up-warn);box-shadow:0 0 8px var(--up-warn);}
+  #sheetText{white-space:pre-line;}
+  /* финальный стол: девять боксов с именами */
+  .fin{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
+       border-radius:18px;padding:13px 14px;margin-bottom:12px;}
+  .fin__h{font:400 19px/1 var(--up-font-display);color:var(--up-gold-text);margin-bottom:11px;}
+  .fin__g{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;}
+  .box{background:rgba(255,255,255,.04);border:1px solid var(--up-line);border-radius:13px;
+       padding:9px 8px;min-height:56px;display:flex;flex-direction:column;justify-content:center;}
+  .box i{font:700 9.5px var(--up-font-ui);color:var(--up-muted);letter-spacing:.12em;
+         font-style:normal;display:block;margin-bottom:3px;}
+  .box b{font-size:12.5px;font-weight:800;line-height:1.25;word-break:break-word;}
+  .box small{display:block;color:var(--up-muted);font-size:10.5px;font-weight:600;margin-top:2px;}
+  .box--free{opacity:.4;}
+  .box--free b{font-weight:600;}
 </style>
 </head>
 <body>
@@ -54,6 +77,8 @@
   </div>
 
   <div id="doneBar"></div>
+  <div id="stageBar"></div>
+  <div id="finalBox"></div>
 
   <div class="cash">
     <div><span class="up-label">Выручка за вечер</span><b id="total">0 ₽</b></div>
@@ -63,7 +88,7 @@
   <div class="up-grid-4" id="tiles" style="margin-bottom:12px">
     <div class="up-tile"><b id="s_alive">0</b><small>В ИГРЕ</small></div>
     <div class="up-tile"><b id="s_in">0</b><small>ВХОДОВ</small></div>
-    <div class="up-tile"><b id="s_re">0</b><small>РЕ-ЭНТРИ</small></div>
+    <div class="up-tile"><b id="s_re">0</b><small>РЕБАЕВ</small></div>
     <div class="up-tile" id="tile_ad"><b id="s_ad">0</b><small>АДДОНОВ</small></div>
   </div>
 
@@ -73,7 +98,7 @@
 
 <div class="bar"><div class="in">
   <button class="up-btn up-btn--gold" id="btnAdd">+ Игрок</button>
-  <button class="up-btn" id="btnSeat">Рассадка</button>
+  <button class="up-btn" id="btnSeat">Столы</button>
   <button class="up-btn" id="btnFinish">Завершить</button>
 </div></div>
 
@@ -178,7 +203,7 @@ function render(){
   $('total').textContent = fmt(STATE.total) + ' ₽';
   $('money').innerHTML =
     'входы ' + fmt((m.buyin||{}).sum) + ' ₽<br>' +
-    'ре-энтри ' + fmt((m.reentry||{}).sum) + ' ₽' +
+    'ребаи ' + fmt((m.reentry||{}).sum) + ' ₽' +
     (t.addon ? '<br>аддоны ' + fmt((m.addon||{}).sum) + ' ₽' : '');
   $('tile_ad').style.display = t.addon ? '' : 'none';
   $('tiles').className = t.addon ? 'up-grid-4' : 'up-grid-3';
@@ -191,6 +216,29 @@ function render(){
           'отмечайте вход, когда игроки придут. За 10 минут до старта турнир откроется сам.</div>'
         : '');
 
+  // полоса стадии: где мы сейчас и чем переключить дальше
+  const st = t.stage || 'rebuy';
+  const dotCls = st === 'rebuy' ? '' : st === 'addon' ? ' dot--wait' : ' dot--fin';
+  $('stageBar').innerHTML = (t.status !== 'live') ? '' :
+    '<div class="stage">' +
+      '<div class="ttl"><span class="dot' + dotCls + '"></span>' + esc(t.stage_text || '') + '</div>' +
+      '<small>' + esc(t.stage_hint || '') + '</small>' +
+      (t.next_stage
+        ? '<button class="up-btn up-btn--gold up-btn--block" data-stage="' + t.next_stage + '">' +
+          esc(t.next_label || '') + '</button>'
+        : '') +
+    '</div>';
+
+  // финальный стол: боксы мест с именами
+  const fin = STATE.final || [];
+  $('finalBox').innerHTML = (t.stage === 'final' && fin.length)
+    ? '<div class="fin"><div class="fin__h">Финальный стол</div><div class="fin__g">' +
+      fin.map(b => '<div class="box' + (b.name ? '' : ' box--free') + '">' +
+        '<i>МЕСТО ' + b.seat + '</i><b>' + (b.name ? esc(b.name) : 'свободно') + '</b>' +
+        (b.nick ? '<small>' + esc(b.nick) + '</small>' : '') + '</div>').join('') +
+      '</div></div>'
+    : '';
+
   $('s_alive').textContent = STATE.alive;
   $('s_in').textContent = (m.buyin||{}).n || 0;
   $('s_re').textContent = (m.reentry||{}).n || 0;
@@ -202,26 +250,37 @@ function render(){
   if (!STATE.players.length) { box.innerHTML = '<div class="up-empty">Пока никто не записан.<br>Игроки появятся, когда запишутся в боте.</div>'; return; }
   if (!list.length) { box.innerHTML = '<div class="up-empty">Никого не найдено</div>'; return; }
 
+  const canBuy   = st === 'rebuy';
+  const canAddon = st === 'addon' && !!t.addon;
+  const cols = canBuy ? 3 : (canAddon ? 2 : 1);
+
   box.innerHTML = list.map(p => {
-    const tag = p.busted ? '<span class="up-chip up-chip--bad">' + (p.place ? p.place + ' место' : 'выбыл') + '</span>'
+    const tag = p.busted ? '<span class="up-chip up-chip--bad">' +
+                  (p.place ? p.place + ' место' : canBuy ? 'без стека' : 'выбыл') + '</span>'
               : p.arrived ? '<span class="up-chip up-chip--ok">в игре</span>'
               : p.wait    ? '<span class="up-chip up-chip--warn">лист ожидания</span>'
                           : '<span class="up-chip">не оплатил</span>';
     const extra = [];
-    if (p.reentry) extra.push('ре-энтри ×' + p.reentry);
+    if (p.reentry) extra.push('ребай ×' + p.reentry);
     if (p.addon)   extra.push('аддон ×' + p.addon);
     if (p.table_no) extra.push('стол ' + p.table_no + ', место ' + p.seat_no);
-    return '<div class="pl' + (p.busted ? ' out' : '') + '" style="--cols:' +
-      (STATE.tournament.addon ? 4 : 3) + '">' +
+
+    let btns = '';
+    if (canBuy) btns +=
+        '<button class="up-btn b-in" data-op="buyin" data-id="' + p.id + '">Вход</button>' +
+        '<button class="up-btn" data-op="reentry" data-id="' + p.id + '">Ребай</button>';
+    if (canAddon) btns += p.addon
+      ? '<button class="up-btn" disabled style="opacity:.45">Аддон взят</button>'
+      : '<button class="up-btn b-in" data-op="addon" data-id="' + p.id + '">Аддон</button>';
+    if (!p.busted) btns +=
+        '<button class="up-btn b-out" data-op="bust" data-id="' + p.id + '">' +
+        (canBuy ? 'Нет стека' : 'Выбыл') + '</button>';
+
+    return '<div class="pl' + (p.busted ? ' out' : '') + '" style="--cols:' + cols + '">' +
       '<div class="hd"><div class="nm">' + esc(p.name) + '</div>' + tag +
       '<button class="up-btn more" data-more="' + p.id + '" title="Ещё">···</button></div>' +
       '<div class="sub">№ ' + p.number + (extra.length ? ' · ' + extra.join(' · ') : '') + '</div>' +
-      '<div class="btns">' +
-        '<button class="up-btn b-in" data-op="buyin" data-id="' + p.id + '">Вход</button>' +
-        '<button class="up-btn" data-op="reentry" data-id="' + p.id + '">Ре-энтри</button>' +
-        (STATE.tournament.addon ? '<button class="up-btn" data-op="addon" data-id="' + p.id + '">Аддон</button>' : '') +
-        '<button class="up-btn b-out" data-op="bust" data-id="' + p.id + '">Выбыл</button>' +
-      '</div></div>';
+      '<div class="btns">' + btns + '</div></div>';
   }).join('');
 }
 
@@ -348,6 +407,9 @@ document.addEventListener('click', async e => {
   const more = e.target.closest('[data-more]');
   if (more) { await playerMenu(+more.dataset.more); return; }
 
+  const stg = e.target.closest('[data-stage]');
+  if (stg) { await changeStage(stg.dataset.stage); return; }
+
   const b = e.target.closest('[data-op]');
   if (!b) return;
   b.disabled = true;
@@ -358,14 +420,57 @@ document.addEventListener('click', async e => {
 });
 
 $('q').addEventListener('input', render);
-$('btnSeat').onclick = async () => {
-  const v = await ask('Раскидать по столам?',
-    'Все, кто оплатил вход и ещё в игре, получат новые столы и места случайным образом. ' +
-    'Напишите ДА для подтверждения.', 'ДА');
+
+/* ---------- стадии турнира ---------- */
+async function changeStage(stage){
+  const texts = {
+    addon: ['Закрыть ребаи?',
+      'Вход и ребаи закроются, начнётся аддон-тайм: каждый, кто за столом, ' +
+      'может один раз взять аддон. Игрокам уйдёт сообщение от бота. ' +
+      'Нажимайте, когда закончится последний ребай-уровень. Напишите ДА.'],
+    play: ['Закончить аддон-тайм?',
+      'Покупок больше не будет, столы соберутся заново поровну. ' +
+      'Дальше играем, и когда останется девять человек, финальный стол ' +
+      'соберётся сам. Напишите ДА.']
+  };
+  const t = texts[stage];
+  if (!t) return;
+  const v = await ask(t[0], t[1], 'ДА');
   if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
-  const res = await post('/seat', {});
+  const res = await post('/stage', { stage });
   toast(res.message || 'Готово');
   refresh(true);
+}
+
+/* ---------- столы ---------- */
+$('btnSeat').onclick = async () => {
+  const tabs = (STATE && STATE.seating) || [];
+  const lines = tabs.length
+    ? tabs.map(t => {
+        const head = 'Стол ' + t.table + ' — ' + t.players.length +
+                     (t.free ? ', свободно ' + t.free : ' (полный)');
+        const who = t.players.length
+          ? t.players.map(p => '   место ' + p.seat + ' · ' + p.name).join('\n')
+          : '   пусто';
+        return head + '\n' + who;
+      }).join('\n\n')
+    : 'За столами пока никого. Игроки садятся сами, как только оплатят вход.';
+
+  const act = await menu('Столы', lines, [
+    { id:'rebalance', label:'Пересобрать поровну', cls:'up-btn--gold' },
+    { id:'shuffle',   label:'Перетасовать всех заново' }
+  ]);
+  if (act === 'rebalance'){
+    const res = await post('/rebalance', {});
+    toast(res.message || 'Готово'); refresh(true);
+  }
+  if (act === 'shuffle'){
+    const v = await ask('Перетасовать всех?',
+      'Все, кто ещё в игре, получат новые столы и места случайным образом. Напишите ДА.', 'ДА');
+    if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
+    const res = await post('/seat', {});
+    toast(res.message || 'Готово'); refresh(true);
+  }
 };
 
 $('btnMenu').onclick = async () => {
