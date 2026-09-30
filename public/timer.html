@@ -184,10 +184,10 @@ body.idle{cursor:none;}
 #stage.final .g1{grid-template-rows:404px 122px 1fr;}
 
 /* слоты финального стола */
-.slots{display:grid;grid-template-columns:repeat(3,320px);gap:16px 24px;margin-top:26px;}
+.slots{display:grid;grid-template-columns:repeat(3,minmax(320px,1fr));gap:16px 24px;margin-top:26px;max-width:1500px;}
 .slot{display:flex;align-items:center;gap:16px;background:linear-gradient(160deg,#17130B,#0E0C08);border:1.5px solid rgba(212,175,90,.3);border-radius:20px;padding:14px 22px;}
 .slot i{width:44px;height:44px;border-radius:50%;background:#241D0F;border:1.5px solid rgba(212,175,90,.5);color:var(--g1);font:800 20px/41px var(--f-ui);text-align:center;font-style:normal;flex:none;}
-.slot span{font:700 30px var(--f-ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.slot span{font:700 28px/1.15 var(--f-ui);overflow-wrap:anywhere;hyphens:auto;}
 .slot.free{opacity:.3;border-style:dashed;}
 
 /* окно «кто выбыл» */
@@ -278,7 +278,7 @@ button.warn2{color:#E0687A;margin-right:auto;}
       </div>
       <div class="st4">
         <div class="card tile"><div class="lab">Игроков в игре</div><div class="v gold"><span id="pl">0</span><em>из <span id="plmax">36</span></em></div></div>
-        <div class="card tile"><div class="lab">Регистрация и ре-энтри</div><div class="v t" id="addon">—</div></div>
+        <div class="card tile"><div class="lab">Вход и ребаи</div><div class="v t" id="addon">—</div></div>
         <div class="card tile"><div class="lab">До финального стола</div><div class="v" id="tofinal">—</div></div>
       </div>
     </div>
@@ -407,7 +407,7 @@ button.warn2{color:#E0687A;margin-right:auto;}
       <div class="fld"><label for="s_final">Финальный стол при скольких игроках</label><input id="s_final" type="number" min="0" max="10" step="1"></div>
     </div>
     <div class="row2">
-      <div class="fld"><label for="s_reentry">Ре-энтри и регистрация до конца уровня</label><input id="s_reentry" type="number" min="0" max="40" step="1"></div>
+      <div class="fld"><label for="s_reentry">Вход и ребаи до конца уровня</label><input id="s_reentry" type="number" min="0" max="40" step="1"></div>
       <div class="fld"><label for="s_len2">&nbsp;</label><input id="s_len2" type="text" value="аддон — строкой «аддон 15» в структуре" disabled></div>
     </div>
     <div class="row2">
@@ -467,18 +467,20 @@ button.warn2{color:#E0687A;margin-right:auto;}
 <script>
 (function(){
 "use strict";
-var KEY='unionpoker.timer.v1';
+var KEY='unionpoker.timer.v2';
 var DEF={
-  name:'Вечерний турнир', sub:'Union Poker · спортивный покер', entries:36, len:10,
+  name:'Турнир клуба', sub:'Union Poker · спортивный покер', entries:36, len:10,
   struct:[
     '100 200 200','200 400 400','300 600 600','400 800 800','500 1000 1000',
     'перерыв 10',
-    '1000 2000 2000','1500 3000 3000','2000 4000 4000','2500 5000 5000','4000 8000 8000',
-    'перерыв 10',
-    '5000 10000 10000','10000 20000 20000','20000 40000 40000','40000 80000 80000',
-    '50000 100000 100000'
+    '600 1200 1200','800 1600 1600','1000 2000 2000','1200 2400 2400','1500 3000 3000',
+    'аддон 15',
+    '2000 4000 4000','2500 5000 5000','3000 6000 6000','4000 8000 8000','5000 10000 10000',
+    '6000 12000 12000','8000 16000 16000','10000 20000 20000','12000 24000 24000',
+    '15000 30000 30000','20000 40000 40000','25000 50000 50000','30000 60000 60000',
+    '40000 80000 80000','50000 100000 100000','60000 120000 120000','80000 160000 160000'
   ].join('\n'),
-  tick:'Телефоны на беззвучный режим;Вход и ре-энтри 2000 ₽;Ре-энтри и поздняя регистрация — до конца 10 уровня;Стартовый стек 25 000 · анте платит большой блайнд',
+  tick:'Телефоны на беззвучный режим;Вход 1500 ₽ · ребай 1500 ₽;Вход и ребаи — до конца 10 уровня;Потом перерыв 15 минут и аддон 1500 ₽, один раз каждому;Финальный стол собирается при 9 игроках;Стартовый стек 25 000 · анте платит большой блайнд',
   ltitle:'Рейтинг сезона',
   lrows:'',
   names:'',
@@ -1005,6 +1007,84 @@ if(firstRun){ save(); setTimeout(openSetup,300); }
 syncAlive(false);
 render();
 setInterval(render,200);
+
+/* =========================================================
+   Связь с кассой. Таймер сам подтягивает с сервера:
+   сколько человек в игре, сколько было входов и кто сидит
+   за финальным столом. Если сервера нет — работает как раньше,
+   всё вводится руками. Адрес можно подменить: timer.html?api=...
+   ========================================================= */
+var API_DEFAULT='https://unionpoker.unicego22.workers.dev';
+var SYNC={on:false,bad:0,dot:null};
+
+function qp(name){
+  var m=new RegExp('[?&]'+name+'=([^&]*)').exec(location.search);
+  return m?decodeURIComponent(m[1]):'';
+}
+function syncBase(){
+  if(qp('nosync'))return '';
+  var u=qp('api')||API_DEFAULT;
+  if(location.protocol==='http:'||location.protocol==='https:'){
+    if(!qp('api'))u=location.origin;
+  }
+  return String(u).replace(/\/+$/,'');
+}
+function syncDot(){
+  if(!SYNC.dot){
+    var d=document.createElement('div');
+    d.style.cssText='position:fixed;right:12px;top:12px;width:9px;height:9px;border-radius:50%;'+
+      'z-index:99;transition:background .3s';
+    document.body.appendChild(d);SYNC.dot=d;
+  }
+  SYNC.dot.style.background=SYNC.on?'#6FD9A2':'#3a352b';
+  SYNC.dot.style.boxShadow=SYNC.on?'0 0 8px #6FD9A2':'none';
+}
+function pull(){
+  var base=syncBase();
+  if(!base){SYNC.on=false;syncDot();return;}
+  var ctl=(typeof AbortController!=='undefined')?new AbortController():null;
+  var to=setTimeout(function(){if(ctl)ctl.abort();},6000);
+  fetch(base+'/api/live',{cache:'no-store',signal:ctl?ctl.signal:undefined})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){
+      clearTimeout(to);
+      if(!d)throw 0;
+      SYNC.on=true;SYNC.bad=0;
+      if(d.title)S.cfg.name=d.title;
+      if(d.seats)S.cfg.entries=d.seats|0;
+      if(d.final_at)S.cfg.finalAt=d.final_at|0;
+      if(d.late_levels)S.cfg.reentryTo=d.late_levels|0;
+
+      var fin=d.final||[];
+      var names=[];
+      (d.tables||[]).forEach(function(t){
+        (t.players||[]).forEach(function(pp){names.push(pp.name);});
+      });
+      // Пока за столами никого — не затираем то, что вели руками.
+      var haveLive=(d.status==='live')&&((d.alive|0)>0||names.length>0||fin.length>0);
+      if(haveLive){
+        S.players=d.alive|0;
+        S.alive=(d.stage==='final'&&fin.length)
+          ? fin.map(function(b){return b.name||'';})
+          : names;
+      }
+      // Финальный стол только переключает экран. Уровень, блайнды и отсчёт
+      // до конца уровня при этом не трогаются — турнир идёт дальше.
+      if(d.stage==='final'&&fin.length&&!S.final){
+        S.final=true;S.view='final';beep(2);
+      }
+      save();syncDot();render();
+    })
+    .catch(function(){
+      clearTimeout(to);
+      SYNC.bad++;
+      if(SYNC.bad>1){SYNC.on=false;syncDot();}
+    });
+}
+syncDot();
+pull();
+setInterval(pull,8000);
+
 })();
 </script>
 </body>

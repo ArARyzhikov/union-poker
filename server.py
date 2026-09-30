@@ -41,6 +41,11 @@ PUBLIC = os.path.join(BASE, "public")
 # ----------------------------------------------------------------------------
 
 DEFAULT_CFG = {
+    # Версия формата настроек. Когда она меняется, сервер сам обновляет
+    # config.json под новый формат, сохранив ваши личные строки: токен,
+    # админов, ключ кассы, адрес приложения и афишу.
+    "cfg_version": 5,
+
     "bot_token": "",                       # токен от @BotFather
     "proxy": "",                           # если Telegram недоступен: "http://127.0.0.1:2080"
     "admins": [],                          # ваш Telegram ID (узнать: напишите боту /id)
@@ -52,30 +57,35 @@ DEFAULT_CFG = {
 
     # Каким по умолчанию получается турнир в афише
     "tournament": {
-        "title": "Вечерний турнир",
-        "time": "18:00",
-        "buyin": 2000,
-        "reentry": 2000,
-        "addon": 0,                        # 0 — аддона нет, кнопка в кассе скрыта
+        "title": "Турнир клуба",
+        "time": "20:00",
+        "buyin": 1500,
+        "reentry": 1500,                   # ребай — та же цена, что и вход
+        "addon": 1500,                     # 0 — аддона нет, кнопка в кассе скрыта
         "seats": 36,
         "stack": 25000,
-        "meta": "Hold'em · стек 25 000 · вход 2000 ₽",
+        "meta": "Hold'em · 4 стола · вход 1500 ₽",
         "theme": ""
     },
+
+    # Столы клуба: сколько их и сколько мест за каждым.
+    # Касса сама сажает пришедшего за самый свободный стол.
+    "tables": 4,
 
     # Расписание клуба: по этим дням сервер сам достраивает афишу вперёд.
     # Поставьте "on": true, когда определитесь с постоянными днями игры.
     "schedule": {
         "on": False,
         "days": ["пт", "сб", "вс"],
-        "time": "18:00",
+        "time": "20:00",
         "weeks_ahead": 2
     },
 
     # Разовые турниры, которых нет в расписании. Дата — в формате ГГГГ-ММ-ДД
     "events": [
-        {"date": "2026-09-27", "time": "18:00", "title": "Демо-день клуба",
-         "meta": "Первый турнир клуба · стек 25 000"}
+        {"date": "2026-10-01", "time": "20:00", "title": "Открытие клуба",
+         "seats": 36,
+         "meta": "Первый турнир сезона · стек 25 000"}
     ],
 
     # очки за место: сколько получает 1-е, 2-е, 3-е и так далее
@@ -84,18 +94,25 @@ DEFAULT_CFG = {
     "seats_per_table": 9,
     "final_at": 9,                         # при скольких игроках финальный стол
 
-    # Структура турнира: [малый блайнд, большой блайнд, анте] или "перерыв 10"
+    # Структура турнира: [малый блайнд, большой блайнд, анте] или "перерыв 10".
+    # Первые пятнадцать уровней — ребай-период: открыт вход и ребаи.
+    # После них перерыв 15 минут — это аддон-тайм. Дальше финальная стадия.
     "structure": [
-        [100, 200, 200], [200, 400, 400], [300, 600, 600], [400, 800, 800], [500, 1000, 1000],
+        [100, 200, 200], [200, 400, 400], [300, 600, 600], [400, 800, 800],
+        [500, 1000, 1000],
         "перерыв 10",
-        [1000, 2000, 2000], [1500, 3000, 3000], [2000, 4000, 4000], [2500, 5000, 5000],
-        [4000, 8000, 8000],
-        "перерыв 10",
-        [5000, 10000, 10000], [10000, 20000, 20000], [20000, 40000, 40000],
-        [40000, 80000, 80000], [50000, 100000, 100000]
+        [600, 1200, 1200], [800, 1600, 1600], [1000, 2000, 2000], [1200, 2400, 2400],
+        [1500, 3000, 3000],
+        "аддон 15",
+        [2000, 4000, 4000], [2500, 5000, 5000], [3000, 6000, 6000], [4000, 8000, 8000],
+        [5000, 10000, 10000],
+        [6000, 12000, 12000], [8000, 16000, 16000], [10000, 20000, 20000],
+        [12000, 24000, 24000], [15000, 30000, 30000], [20000, 40000, 40000],
+        [25000, 50000, 50000], [30000, 60000, 60000], [40000, 80000, 80000],
+        [50000, 100000, 100000], [60000, 120000, 120000], [80000, 160000, 160000]
     ],
     "level_minutes": 10,
-    "late_levels": 10,                     # до конца какого уровня идут ре-энтри и поздняя запись
+    "late_levels": 10,                     # до конца какого уровня идут ребаи и поздняя запись
     "cancel_before_min": 10,               # за сколько минут до старта закрывается отмена записи
     "open_before_min": 10,                 # за сколько минут до старта турнир открывается в кассе
 
@@ -104,16 +121,20 @@ DEFAULT_CFG = {
 
     "rules": [
         "Играть можно только после регистрации в боте клуба",
-        "Стартовый стек 25 000, уровни по 10 минут",
+        "Старт в 20:00, стартовый стек 25 000, уровни по 10 минут",
         "Формат анте — большой блайнд (BB ante)",
-        "Ре-энтри и поздняя регистрация — до конца 10 уровня",
-        "После 10 уровня новых входов нет",
-        "Перерывы по 10 минут после 5 и после 10 уровня",
-        "Финальный стол собирается при 9 игроках",
+        "Вход 1500 ₽ открыт до конца 10 уровня — заходить можно в любой момент",
+        "Ребай 1500 ₽ — когда кончился стек, без ограничения по количеству",
+        "После 10 уровня перерыв 15 минут: аддон 1500 ₽, один раз каждому",
+        "С окончанием аддон-тайма входов и ребаев больше нет",
+        "Финальный стол собирается сам, когда остаётся 9 игроков",
         "Призы клуба — очки рейтинга сезона",
         "Телефоны за столом на беззвучном режиме"
     ],
 }
+
+
+CFG_UPGRADED = False
 
 
 def load_cfg():
@@ -124,19 +145,31 @@ def load_cfg():
     with open(CFG_PATH, encoding="utf-8") as f:
         cfg = json.load(f)
 
-    # Переход со старой версии: раньше в конфиге лежал один турнир и структура
-    # по 20 минут. Оставляем только личные настройки, остальное берём новое.
-    if "schedule" not in cfg:
-        keep = ("bot_token", "proxy", "admins", "admin_key", "app_url", "club", "port", "dev")
+    # Переход на новый формат настроек. Личные строки сохраняем, всё остальное
+    # (цены, структура, правила) берём из новой версии — иначе сервер будет
+    # работать по свежему коду, но по старым настройкам.
+    global CFG_UPGRADED
+    if cfg.get("cfg_version") != DEFAULT_CFG["cfg_version"]:
+        keep = ("bot_token", "proxy", "admins", "admin_key", "app_url", "club", "port", "dev",
+                "schedule")
         fresh = json.loads(json.dumps(DEFAULT_CFG))
         for k in keep:
             if k in cfg:
                 fresh[k] = cfg[k]
+        # афишу не теряем: старые события оставляем, новые из этой версии
+        # добавляем, если такого дня и времени ещё нет
+        old_events = list(cfg.get("events") or [])
+        seen = {(e.get("date"), e.get("time")) for e in old_events}
+        for e in DEFAULT_CFG.get("events") or []:
+            if (e.get("date"), e.get("time")) not in seen:
+                old_events.append(e)
+        fresh["events"] = old_events
         try:
             os.replace(CFG_PATH, CFG_PATH + ".old")
             with open(CFG_PATH, "w", encoding="utf-8") as f:
                 json.dump(fresh, f, ensure_ascii=False, indent=2)
-            print("config.json обновлён под новую афишу. Старый лежит рядом: config.json.old")
+            print("config.json обновлён под новый формат. Старый лежит рядом: config.json.old")
+            CFG_UPGRADED = True
         except Exception as e:
             print("! Не получилось обновить config.json:", e)
         cfg = fresh
@@ -325,11 +358,24 @@ def init_db():
                       ("buyin", "INTEGER DEFAULT 0"), ("reentry", "INTEGER DEFAULT 0"),
                       ("addon", "INTEGER DEFAULT 0"), ("stack", "INTEGER DEFAULT 0"),
                       ("seats", "INTEGER DEFAULT 36"), ("meta", "TEXT"), ("theme", "TEXT"),
-                      ("auto", "INTEGER DEFAULT 0")):
+                      ("auto", "INTEGER DEFAULT 0"),
+                      ("stage", "TEXT DEFAULT 'rebuy'")):
         add_column("tournaments", col, decl)
 
     fix_old_tournaments()
+    if CFG_UPGRADED:
+        refresh_money()
     ensure_events()
+
+
+def refresh_money():
+    """После смены настроек подтягивает новые цены в ещё не сыгранные турниры."""
+    b = CFG["tournament"]
+    x("""UPDATE tournaments SET buyin=?, reentry=?, addon=?, stack=?, seats=?, meta=?
+         WHERE status!='finished'""",
+      (int(b["buyin"]), int(b["reentry"]), int(b["addon"]),
+       int(b["stack"]), int(b["seats"]), b["meta"]))
+    print("Цены и параметры подтянуты в турниры афиши")
 
 
 def add_column(table, column, decl):
@@ -382,6 +428,12 @@ def refresh_display():
 
 def log(who, action):
     x("INSERT INTO log(who, action) VALUES(?,?)", (str(who), action))
+
+
+def real_name(v):
+    """Ник годится любой, лишь бы он был: две буквы и больше."""
+    v = str(v or "").strip()
+    return len(v) >= 2 and any(c.isalpha() for c in v)
 
 
 def norm_phone(p):
@@ -537,12 +589,124 @@ def tid():
     return r["id"] if r else 0
 
 
-def reg_open(row):
-    """Можно ли записаться: до старта всегда, после — пока идёт поздняя регистрация."""
+# ----------------------------------------------------------------------------
+# СТАДИИ ТУРНИРА
+#
+#   rebuy — ребай-период: открыт вход за 1500 и ребай за 1500
+#   addon — перерыв после последнего ребай-уровня: только аддон, один раз
+#   final — финальная стадия: покупок нет, играем до победителя
+#
+# Стадию переключает касса кнопкой, а не часы сервера: таймер можно ставить
+# на паузу, и время на сервере с ним разъедется.
+# ----------------------------------------------------------------------------
+
+STAGES = ("rebuy", "addon", "play", "final")
+STAGE_TEXT = {"rebuy": "Ребай-период", "addon": "Аддон-тайм",
+              "play": "Основная игра", "final": "Финальный стол"}
+STAGE_HINT = {
+    "rebuy": "Открыт вход и ребаи",
+    "addon": "Вход и ребаи закрыты, идёт аддон",
+    "play": "Покупок нет. Финальный стол соберётся сам, когда останется 9 игроков",
+    "final": "Девять за одним столом, играем до победителя",
+}
+NEXT_STAGE = {"rebuy": "addon", "addon": "play", "play": "", "final": ""}
+NEXT_LABEL = {"rebuy": "Закрыть ребаи → аддон-тайм", "addon": "Закончить аддон-тайм",
+              "play": "", "final": ""}
+
+
+def final_at():
+    return max(2, min(10, int(CFG.get("final_at", 9))))
+
+
+def check_final(admin=None):
+    """Как только в игре остаётся девять — собираем финальный стол сам."""
+    row = t_row(tid())
     if not row or row["status"] == "finished":
         return False
-    dt = parse_dt(row["start"])
-    return bool(dt) and now() <= dt + timedelta(minutes=late_minutes())
+    if stage_of(row) not in ("addon", "play"):
+        return False
+    if alive_count(row["id"]) > final_at():
+        return False
+    x("UPDATE tournaments SET stage='final' WHERE id=?", (row["id"],))
+    rebalance(admin)
+    log("сервер", f"турнир #{row['id']}: собран финальный стол")
+    notify_players(row["id"], "Собран финальный стол. Удачи!")
+    return True
+
+
+def final_table():
+    """Боксы финального стола: место → игрок. Пустые места тоже возвращаем."""
+    row = t_row(tid())
+    if not row or stage_of(row) != "final":
+        return []
+    rows = q("""SELECT p.name, p.username, p.number, e.seat_no FROM entries e
+                JOIN players p ON p.id = e.player_id
+                WHERE e.tid=? AND e.arrived=1 AND e.busted=0
+                ORDER BY e.seat_no""", (row["id"],))
+    by_seat = {r["seat_no"]: r for r in rows if r["seat_no"]}
+    out = []
+    for seat in range(1, final_at() + 1):
+        r = by_seat.get(seat)
+        out.append({"seat": seat,
+                    "name": r["name"] if r else "",
+                    "nick": ("@" + r["username"]) if r and r["username"] else "",
+                    "number": r["number"] if r else 0})
+    return out
+
+
+def stage_of(row):
+    if not row:
+        return "rebuy"
+    keys = row.keys() if hasattr(row, "keys") else []
+    s = row["stage"] if "stage" in keys else "rebuy"
+    return s if s in STAGES else "rebuy"
+
+
+def set_stage(stage, admin=None):
+    """Переводит текущий турнир на следующую стадию."""
+    if stage not in STAGES:
+        return False, "Неизвестная стадия"
+    row = t_row(tid())
+    if not row:
+        return False, "Турнир не найден"
+    if row["status"] == "finished":
+        return False, "Турнир уже завершён"
+    if stage_of(row) == stage:
+        return False, "Эта стадия уже идёт"
+    x("UPDATE tournaments SET stage=?, status='live' WHERE id=?", (stage, row["id"]))
+    log(admin, f"турнир #{row['id']}: стадия {stage}")
+    if stage == "addon":
+        price = row["addon"] or CFG["tournament"]["addon"]
+        notify_players(row["id"],
+                       "Ребай-период закончен. Перерыв — аддон "
+                       f"{price} ₽, один раз каждому. Дальше финальная стадия.")
+    if stage == "play":
+        rebalance(admin)
+        notify_players(row["id"], "Аддон-тайм закончен, покупок больше нет. "
+                                  f"Финальный стол соберётся при {final_at()} игроках.")
+        if check_final(admin):
+            return True, "Стадия: " + STAGE_TEXT["final"]
+    return True, "Стадия: " + STAGE_TEXT[stage]
+
+
+def notify_players(t_id, text):
+    """Сообщение всем, кто сейчас за столом."""
+    if not CFG.get("bot_token"):
+        return
+    for r in q("""SELECT p.tg_id FROM entries e JOIN players p ON p.id=e.player_id
+                  WHERE e.tid=? AND e.arrived=1 AND e.busted=0 AND p.tg_id IS NOT NULL""",
+               (t_id,)):
+        send(r["tg_id"], text)
+        time.sleep(0.05)
+
+
+def reg_open(row):
+    """Можно ли записаться: до старта всегда, после — пока идёт ребай-период."""
+    if not row or row["status"] == "finished":
+        return False
+    if row["status"] == "live":
+        return stage_of(row) == "rebuy"
+    return True
 
 
 def can_cancel(row):
@@ -565,10 +729,14 @@ def t_info(row):
                 "stack": base["stack"], "seats": base["seats"], "meta": base["meta"],
                 "theme": "", "taken": 0, "free": base["seats"], "waiting": 0,
                 "starts_in": 0, "reg_open": False, "can_cancel": False, "late": False,
+                "stage": "rebuy", "stage_text": STAGE_TEXT["rebuy"],
+                "stage_hint": STAGE_HINT["rebuy"], "next_stage": "addon",
+                "next_label": NEXT_LABEL["rebuy"],
                 "empty": True}
     dt = parse_dt(row["start"]) or now()
     seats = row["seats"] or base["seats"]
     tk = seated_count(row["id"])
+    st = stage_of(row)
     return {
         "id": row["id"],
         "title": row["title"] or base["title"],
@@ -594,6 +762,13 @@ def t_info(row):
         "reg_open": reg_open(row),
         "can_cancel": can_cancel(row),
         "late": row["status"] != "finished" and now() > dt,
+        "stage": st,
+        "stage_text": STAGE_TEXT[st],
+        "stage_hint": STAGE_HINT[st],
+        "next_stage": NEXT_STAGE[st],
+        "next_label": NEXT_LABEL[st],
+        "tables": tables_count(),
+        "seats_per_table": per_table(),
         "empty": False,
     }
 
@@ -708,74 +883,180 @@ def unregister_player(player_id, t_id=None):
 # КАССА
 # ----------------------------------------------------------------------------
 
+def tables_count():
+    return max(1, int(CFG.get("tables", 4)))
+
+
+def per_table():
+    return max(2, min(10, int(CFG.get("seats_per_table", 9))))
+
+
+def free_seat(t_id):
+    """Самый свободный стол и свободное место за ним. (0, 0) — мест нет."""
+    per, tc = per_table(), tables_count()
+    used = {}
+    for r in q("""SELECT table_no, seat_no FROM entries
+                  WHERE tid=? AND arrived=1 AND busted=0 AND table_no>0""", (t_id,)):
+        used.setdefault(r["table_no"], set()).add(r["seat_no"])
+    best, best_n = 0, None
+    for t in range(1, tc + 1):
+        n = len(used.get(t, ()))
+        if n >= per:
+            continue
+        if best_n is None or n < best_n:
+            best, best_n = t, n
+    if not best:
+        return 0, 0
+    busy = used.get(best, set())
+    for seat in range(1, per + 1):
+        if seat not in busy:
+            return best, seat
+    return best, 0
+
+
+def seat_player(entry_id, t_id):
+    """Сажает игрока за самый свободный стол."""
+    t, s = free_seat(t_id)
+    x("UPDATE entries SET table_no=?, seat_no=? WHERE id=?", (t, s, entry_id))
+    return t, s
+
+
+def clear_seat(entry_id):
+    x("UPDATE entries SET table_no=0, seat_no=0 WHERE id=?", (entry_id,))
+
+
+def rebalance(admin=None):
+    """Пересобирает столы: игроков поровну на минимально нужное число столов."""
+    per = per_table()
+    rows = q("""SELECT id FROM entries WHERE tid=? AND arrived=1 AND busted=0
+                ORDER BY table_no, seat_no""", (tid(),))
+    ids = [r["id"] for r in rows]
+    if not ids:
+        return 0, 0
+    need = max(1, min(tables_count(), -(-len(ids) // per)))
+    for i, eid in enumerate(ids):
+        x("UPDATE entries SET table_no=?, seat_no=? WHERE id=?",
+          (i % need + 1, i // need + 1, eid))
+    log(admin, f"столы пересобраны: {len(ids)} игроков на {need}")
+    return len(ids), need
+
+
 def purchase(player_id, kind, admin=None):
-    """Вход, ре-энтри или аддон. Возвращает (успех, сообщение)."""
-    t = current_tournament()
+    """Вход, ребай или аддон. Возвращает (успех, сообщение)."""
+    row = t_row(tid())
+    if not row:
+        return False, "Турнир не найден"
+    if row["status"] == "finished":
+        return False, "Турнир уже завершён"
+    stage = stage_of(row)
+    t = t_info(row)
     price = {"buyin": t["buyin"], "reentry": t["reentry"], "addon": t["addon"]}.get(kind)
     if price is None:
         return False, "Неизвестная операция"
-    if kind == "addon" and not price:
-        return False, "Аддон в этом турнире не продаётся"
 
-    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
+    if kind in ("buyin", "reentry") and stage != "rebuy":
+        return False, ("Ребай-период закончен — вход и ребаи закрыты"
+                       if stage == "addon" else
+                       "Идёт финальная стадия, входов и ребаев больше нет")
+    if kind == "addon":
+        if not price:
+            return False, "Аддон в этом турнире не продаётся"
+        if stage == "rebuy":
+            return False, ("Аддон продаётся в аддон-тайм. Нажмите «Закрыть ребаи», "
+                           "когда закончится ребай-период")
+        if stage == "final":
+            return False, "Аддон-тайм закончился, в финальной стадии покупок нет"
+        if q("SELECT 1 FROM purchases WHERE tid=? AND player_id=? AND kind='addon'",
+             (row["id"], player_id), one=True):
+            return False, "Аддон уже взят"
+
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (row["id"], player_id), one=True)
     if not e:
-        x("INSERT INTO entries(tid, player_id) VALUES(?,?)", (tid(), player_id))
-        e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
+        x("INSERT INTO entries(tid, player_id) VALUES(?,?)", (row["id"], player_id))
+        e = q("SELECT * FROM entries WHERE tid=? AND player_id=?",
+              (row["id"], player_id), one=True)
 
+    seat_msg = ""
     if kind == "buyin":
         if e["arrived"]:
             return False, "Вход уже оплачен"
         x("UPDATE entries SET arrived=1, busted=0, place=0, wait=0 WHERE id=?", (e["id"],))
+        tb, st = seat_player(e["id"], row["id"])
+        seat_msg = f" · стол {tb}, место {st}" if tb else " · свободных мест нет"
     elif kind == "reentry":
+        if not e["arrived"]:
+            return False, "Сначала оплатите вход"
         if not e["busted"]:
-            return False, "Игрок ещё в игре"
+            return False, "Игрок ещё в игре — ребай берут, когда кончился стек"
         x("UPDATE entries SET busted=0, place=0 WHERE id=?", (e["id"],))
+        tb, st = seat_player(e["id"], row["id"])
+        seat_msg = f" · стол {tb}, место {st}" if tb else " · свободных мест нет"
     elif kind == "addon":
         if not e["arrived"] or e["busted"]:
             return False, "Игрок не за столом"
 
     x("INSERT INTO purchases(tid, player_id, kind, amount, by_admin) VALUES(?,?,?,?,?)",
-      (tid(), player_id, kind, price, admin))
+      (row["id"], player_id, kind, price, admin))
     log(admin, f"{kind} игроку {player_id}")
-    return True, "Готово"
+    return True, {"buyin": "Вход оплачен", "reentry": "Ребай", "addon": "Аддон"}[kind] + seat_msg
 
 
 def bust(player_id, admin=None):
-    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
+    """Стек кончился. В ребай-период это ещё не место, а повод взять ребай."""
+    row = t_row(tid())
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?",
+          (row["id"] if row else 0, player_id), one=True)
     if not e or not e["arrived"]:
         return False, "Игрок не за столом"
     if e["busted"]:
         return False, "Уже отмечен"
+    if stage_of(row) == "rebuy":
+        x("UPDATE entries SET busted=1, place=0, table_no=0, seat_no=0 WHERE id=?", (e["id"],))
+        log(admin, f"кончился стек у игрока {player_id}")
+        return True, "Стек кончился — можно взять ребай"
     place = alive_count()          # сколько осталось вместе с ним — это его место
-    x("UPDATE entries SET busted=1, place=? WHERE id=?", (place, e["id"]))
+    x("UPDATE entries SET busted=1, place=?, table_no=0, seat_no=0 WHERE id=?",
+      (place, e["id"]))
     log(admin, f"выбыл игрок {player_id}, место {place}")
-    return True, f"{place} место"
+    msg = f"{place} место"
+    if check_final(admin):
+        msg += " · собран финальный стол"
+    return True, msg
 
 
 def make_seating(admin=None):
-    """Случайно раскидывает пришедших игроков по столам."""
+    """Заново раскидывает всех, кто за столом, случайным образом."""
     import random
-    per = max(2, min(10, int(CFG.get("seats_per_table", 9))))
+    per, tc = per_table(), tables_count()
     rows = q("SELECT e.id FROM entries e WHERE e.tid=? AND e.arrived=1 AND e.busted=0", (tid(),))
     ids = [r["id"] for r in rows]
     random.shuffle(ids)
+    need = max(1, min(tc, -(-len(ids) // per))) if ids else 1
     for i, eid in enumerate(ids):
         x("UPDATE entries SET table_no=?, seat_no=? WHERE id=?",
-          (i // per + 1, i % per + 1, eid))
+          (i % need + 1, i // need + 1, eid))
     log(admin, f"рассадка: {len(ids)} игроков")
     return len(ids)
 
 
 def seating():
-    """Кто за каким столом сидит."""
-    rows = q("""SELECT p.name, e.table_no, e.seat_no FROM entries e
+    """Кто за каким столом сидит — все столы клуба, включая пустые."""
+    rows = q("""SELECT p.name, p.number, e.table_no, e.seat_no FROM entries e
                 JOIN players p ON p.id = e.player_id
                 WHERE e.tid=? AND e.arrived=1 AND e.busted=0 AND e.table_no > 0
                 ORDER BY e.table_no, e.seat_no""", (tid(),))
     tables = {}
     for r in rows:
-        tables.setdefault(r["table_no"], []).append({"seat": r["seat_no"], "name": r["name"]})
-    return [{"table": k, "players": v} for k, v in sorted(tables.items())]
+        tables.setdefault(r["table_no"], []).append(
+            {"seat": r["seat_no"], "name": r["name"], "number": r["number"]})
+    out = []
+    for t in range(1, tables_count() + 1):
+        pl = tables.get(t, [])
+        if pl or t <= tables_count():
+            out.append({"table": t, "players": pl, "free": max(0, per_table() - len(pl))})
+    for t in sorted(k for k in tables if k > tables_count()):
+        out.append({"table": t, "players": tables[t], "free": 0})
+    return out
 
 
 def remove_entry(player_id, admin=None):
@@ -1010,8 +1291,9 @@ def structure_text():
     lines = ["<b>Структура турнира</b>",
              f"Стартовый стек: {t['stack']}",
              f"Уровни по {per} минут · анте по формату большого блайнда",
-             f"Ре-энтри и поздняя регистрация — до конца {CFG.get('late_levels', 10)} уровня "
-             f"({late_minutes()} минут)",
+             f"Вход {t['buyin']} ₽ и ребай {t['reentry']} ₽ — до конца "
+             f"{CFG.get('late_levels', 15)} уровня",
+             f"Дальше перерыв и аддон {t['addon']} ₽, один раз каждому",
              ""]
     lvl = 0
     for item in CFG.get("structure", []):
@@ -1314,6 +1596,9 @@ class Handler(BaseHTTPRequestHandler):
                 "tournaments": items,
                 "live": {"status": live["status"], "id": live["id"], "title": live["title"],
                          "alive": alive_count(),
+                         "stage": live["stage"], "stage_text": live["stage_text"],
+                         "stage_hint": live["stage_hint"], "final": final_table(),
+                         "final_at": final_at(),
                          "seating": seating() if live["status"] == "live" else []},
                 "structure": {"levels": CFG.get("structure", []),
                               "minutes": CFG.get("level_minutes", 10),
@@ -1327,6 +1612,69 @@ class Handler(BaseHTTPRequestHandler):
                             "points": r["points"], "me": r["id"] == p["id"]} for r in rating()],
                 "history": [{"date": h["date"], "title": h["title"], "place": h["place"],
                              "of": h["total"], "points": h["points"]} for h in history(p["id"])]
+            })
+
+        if path == "/api/afisha":
+            # Афиша для гостя: её видно всем, кто открыл приложение, ещё до
+            # регистрации. Личных данных здесь нет — только то, что и так
+            # висит на афише клуба.
+            items = []
+            for t in feed():
+                t = dict(t)
+                t.update({"players": [], "waitlist": [], "registered": False, "wait": False,
+                          "wait_no": 0, "arrived": False, "busted": False, "place": 0,
+                          "table": 0, "seat": 0})
+                items.append(t)
+            live = current_tournament()
+            return self.json_out({
+                "club": CFG.get("club", "Union Poker"),
+                "guest": True,
+                "me": {"name": "Гость", "username": "", "number": 0, "since": "",
+                       "tournaments": 0, "best": 0, "finals": 0, "points": 0,
+                       "rank": "—", "achievements": []},
+                "tournaments": items,
+                "live": {"status": live["status"], "id": live["id"], "title": live["title"],
+                         "alive": alive_count(), "stage": live["stage"],
+                         "stage_text": live["stage_text"], "stage_hint": live["stage_hint"],
+                         "final": final_table(), "final_at": final_at(),
+                         "seating": seating() if live["status"] == "live" else []},
+                "structure": {"levels": CFG.get("structure", []),
+                              "minutes": CFG.get("level_minutes", 10),
+                              "stack": CFG["tournament"].get("stack", 0),
+                              "chips": CFG.get("chips", []),
+                              "late_levels": CFG.get("late_levels", 10),
+                              "late_minutes": late_minutes(),
+                              "final_at": final_at()},
+                "rules": CFG.get("rules", []),
+                "rating": [{"place": r["place"], "name": r["name"], "games": r["games"],
+                            "points": r["points"], "me": False} for r in rating()],
+                "history": []
+            })
+
+        if path == "/api/live":
+            # Открытые данные турнира для таймера на телевизоре. Ключ не нужен:
+            # здесь нет ни денег, ни телефонов — только то, что и так висит на экране.
+            t = current_tournament()
+            ent = q("""SELECT kind, COUNT(*) AS n FROM purchases WHERE tid=? GROUP BY kind""",
+                    (tid(),))
+            n = {r["kind"]: r["n"] for r in ent}
+            return self.json_out({
+                "club": CFG.get("club", "Union Poker"),
+                "title": t["title"], "date": t["date"], "time": t["time"],
+                "status": t["status"], "stage": t["stage"], "stage_text": t["stage_text"],
+                "stage_hint": t["stage_hint"],
+                "seats": t["seats"], "taken": t["taken"],
+                "alive": alive_count(),
+                "buyins": n.get("buyin", 0), "reentries": n.get("reentry", 0),
+                "addons": n.get("addon", 0),
+                "final_at": final_at(),
+                "tables": seating() if t["status"] == "live" else [],
+                "final": final_table(),
+                "level_minutes": CFG.get("level_minutes", 10),
+                "late_levels": CFG.get("late_levels", 10),
+                "structure": CFG.get("structure", []),
+                "stack": CFG["tournament"].get("stack", 0),
+                "buyin": t["buyin"], "reentry": t["reentry"], "addon": t["addon"],
             })
 
         if path == "/api/admin/state":
@@ -1347,6 +1695,9 @@ class Handler(BaseHTTPRequestHandler):
                 "pinned": bool(setting("pin_tid")),
                 "players": [dict(r) for r in rows],
                 "alive": alive_count(),
+                "seating": seating(),
+                "final": final_table(),
+                "final_at": final_at(),
                 "money": {r["kind"]: {"n": r["n"], "sum": r["sum"]} for r in money},
                 "total": sum(r["sum"] for r in money),
                 "late_minutes": late_minutes()
@@ -1391,8 +1742,14 @@ class Handler(BaseHTTPRequestHandler):
             phone = norm_phone(body.get("phone"))
             if not phone or len(phone) < 12:
                 return self.json_out({"ok": False, "message": "Неверный номер телефона"})
-            name = (body.get("name") or "").strip() or \
-                " ".join(filter(None, [u.get("first_name"), u.get("last_name")])) or "Игрок"
+            name = (body.get("name") or "").strip()
+            if not real_name(name):
+                # подставлять ник из Telegram нельзя: в списке участников и в
+                # кассе должно стоять имя, по которому человека объявляют
+                name = " ".join(filter(None, [u.get("first_name"), u.get("last_name")])).strip()
+                if not real_name(name):
+                    return self.json_out({"ok": False,
+                                          "message": "Впишите ник"})
             p = save_player(u["id"], name, u.get("username"), phone)
             welcome(p)
             return self.json_out({"ok": True, "message": "Добро пожаловать в клуб",
@@ -1433,6 +1790,20 @@ class Handler(BaseHTTPRequestHandler):
                 n = make_seating("admin")
                 return self.json_out({"ok": True, "message": f"Рассажено игроков: {n}",
                                       "seating": seating()})
+
+            if path == "/api/admin/stage":
+                ok, msg = set_stage(body.get("stage"), "admin")
+                return self.json_out({"ok": ok, "message": msg,
+                                      "tournament": current_tournament()})
+
+            if path == "/api/admin/rebalance":
+                n, tabs = rebalance("admin")
+                if not n:
+                    return self.json_out({"ok": False, "message": "За столами пока никого"})
+                return self.json_out({"ok": True, "seating": seating(),
+                                      "message": f"{n} {plural(n, 'игрок', 'игрока', 'игроков')} "
+                                                 f"на {tabs} "
+                                                 f"{plural(tabs, 'столе', 'столах', 'столах')}"})
 
             if path == "/api/admin/remove":
                 ok, msg = remove_entry(body.get("player_id"), "admin")
