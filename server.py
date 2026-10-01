@@ -44,7 +44,7 @@ DEFAULT_CFG = {
     # Версия формата настроек. Когда она меняется, сервер сам обновляет
     # config.json под новый формат, сохранив ваши личные строки: токен,
     # админов, ключ кассы, адрес приложения и афишу.
-    "cfg_version": 5,
+    "cfg_version": 6,
 
     "bot_token": "",                       # токен от @BotFather
     "proxy": "",                           # если Telegram недоступен: "http://127.0.0.1:2080"
@@ -62,6 +62,7 @@ DEFAULT_CFG = {
         "buyin": 1500,
         "reentry": 1500,                   # ребай — та же цена, что и вход
         "addon": 1500,                     # 0 — аддона нет, кнопка в кассе скрыта
+        "addon_stack": 50000,              # сколько фишек даёт аддон и поздний вход
         "seats": 36,
         "stack": 25000,
         "meta": "Hold'em · 4 стола · вход 1500 ₽",
@@ -101,17 +102,13 @@ DEFAULT_CFG = {
         [100, 200, 200], [200, 400, 400], [300, 600, 600], [400, 800, 800],
         [500, 1000, 1000],
         "перерыв 10",
-        [600, 1200, 1200], [800, 1600, 1600], [1000, 2000, 2000], [1200, 2400, 2400],
-        [1500, 3000, 3000],
+        [600, 1200, 1200], [1000, 2000, 2000], [1500, 3000, 3000], [2000, 4000, 4000],
+        [2500, 5000, 5000],
         "аддон 15",
-        [2000, 4000, 4000], [2500, 5000, 5000], [3000, 6000, 6000], [4000, 8000, 8000],
-        [5000, 10000, 10000],
-        [6000, 12000, 12000], [8000, 16000, 16000], [10000, 20000, 20000],
-        [12000, 24000, 24000], [15000, 30000, 30000], [20000, 40000, 40000],
-        [25000, 50000, 50000], [30000, 60000, 60000], [40000, 80000, 80000],
-        [50000, 100000, 100000], [60000, 120000, 120000], [80000, 160000, 160000]
+        [7500, 15000, 15000], [10000, 20000, 20000], [15000, 30000, 30000],
+        [25000, 50000, 50000], [50000, 100000, 100000]
     ],
-    "level_minutes": 10,
+    "level_minutes": 12,
     "late_levels": 10,                     # до конца какого уровня идут ребаи и поздняя запись
     "cancel_before_min": 10,               # за сколько минут до старта закрывается отмена записи
     "open_before_min": 10,                 # за сколько минут до старта турнир открывается в кассе
@@ -121,13 +118,16 @@ DEFAULT_CFG = {
 
     "rules": [
         "Играть можно только после регистрации в боте клуба",
-        "Старт в 20:00, стартовый стек 25 000, уровни по 10 минут",
+        "Старт в 20:00, стартовый стек 25 000, уровни по 12 минут",
         "Формат анте — большой блайнд (BB ante)",
         "Вход 1500 ₽ открыт до конца 10 уровня — заходить можно в любой момент",
         "Ребай 1500 ₽ — когда кончился стек, без ограничения по количеству",
-        "После 10 уровня перерыв 15 минут: аддон 1500 ₽, один раз каждому",
-        "С окончанием аддон-тайма входов и ребаев больше нет",
+        "После 10 уровня перерыв 15 минут: поздняя регистрация и аддон по 1500 ₽",
+        "В этот перерыв дают 50 000 фишек вместо 25 000",
+        "С окончанием перерыва входов, ребаев и аддонов больше нет",
+        "Перерыв 10 минут после 5 уровня",
         "Финальный стол собирается сам, когда остаётся 9 игроков",
+        "Игра один на один идёт без анте",
         "Призы клуба — очки рейтинга сезона",
         "Телефоны за столом на беззвучном режиме"
     ],
@@ -601,16 +601,16 @@ def tid():
 # ----------------------------------------------------------------------------
 
 STAGES = ("rebuy", "addon", "play", "final")
-STAGE_TEXT = {"rebuy": "Ребай-период", "addon": "Аддон-тайм",
+STAGE_TEXT = {"rebuy": "Ребай-период", "addon": "Перерыв: аддон и поздняя регистрация",
               "play": "Основная игра", "final": "Финальный стол"}
 STAGE_HINT = {
     "rebuy": "Открыт вход и ребаи",
-    "addon": "Вход и ребаи закрыты, идёт аддон",
+    "addon": "Вход, ребай и аддон по 1500 ₽ — дают 50 000 фишек",
     "play": "Покупок нет. Финальный стол соберётся сам, когда останется 9 игроков",
     "final": "Девять за одним столом, играем до победителя",
 }
 NEXT_STAGE = {"rebuy": "addon", "addon": "play", "play": "", "final": ""}
-NEXT_LABEL = {"rebuy": "Закрыть ребаи → аддон-тайм", "addon": "Закончить аддон-тайм",
+NEXT_LABEL = {"rebuy": "Закрыть ребаи → перерыв с аддоном", "addon": "Закончить перерыв",
               "play": "", "final": ""}
 
 
@@ -623,7 +623,8 @@ def check_final(admin=None):
     row = t_row(tid())
     if not row or row["status"] == "finished":
         return False
-    if stage_of(row) not in ("addon", "play"):
+    # В перерыв ещё заходят новые игроки, поэтому финал там не собираем
+    if stage_of(row) != "play":
         return False
     if alive_count(row["id"]) > final_at():
         return False
@@ -891,15 +892,28 @@ def per_table():
     return max(2, min(10, int(CFG.get("seats_per_table", 9))))
 
 
-def free_seat(t_id):
-    """Самый свободный стол и свободное место за ним. (0, 0) — мест нет."""
+def tables_needed(n):
+    """Сколько столов нужно на n человек: минимум, но не больше, чем есть в клубе."""
     per, tc = per_table(), tables_count()
+    return max(1, min(tc, -(-max(0, n) // per))) if n else 1
+
+
+def free_seat(t_id):
+    """Куда посадить пришедшего.
+
+    Столы открываются по мере надобности: пока хватает одного, все сидят за
+    ним. Это важно — четыре стола по три человека игрой не считаются.
+    Среди уже открытых выбираем тот, где меньше народу.
+    """
+    per = per_table()
     used = {}
     for r in q("""SELECT table_no, seat_no FROM entries
                   WHERE tid=? AND arrived=1 AND busted=0 AND table_no>0""", (t_id,)):
         used.setdefault(r["table_no"], set()).add(r["seat_no"])
+    alive = sum(len(v) for v in used.values())
+    need = tables_needed(alive + 1)
     best, best_n = 0, None
-    for t in range(1, tc + 1):
+    for t in range(1, need + 1):
         n = len(used.get(t, ()))
         if n >= per:
             continue
@@ -915,9 +929,20 @@ def free_seat(t_id):
 
 
 def seat_player(entry_id, t_id):
-    """Сажает игрока за самый свободный стол."""
+    """Сажает игрока. Если из-за него открывается новый стол — разводит поровну."""
+    before = len({r["table_no"] for r in q(
+        """SELECT DISTINCT table_no FROM entries
+           WHERE tid=? AND arrived=1 AND busted=0 AND table_no>0""", (t_id,))})
     t, s = free_seat(t_id)
     x("UPDATE entries SET table_no=?, seat_no=? WHERE id=?", (t, s, entry_id))
+    after = len({r["table_no"] for r in q(
+        """SELECT DISTINCT table_no FROM entries
+           WHERE tid=? AND arrived=1 AND busted=0 AND table_no>0""", (t_id,))})
+    if after > before > 0:
+        rebalance("сервер")
+        e = q("SELECT table_no, seat_no FROM entries WHERE id=?", (entry_id,), one=True)
+        if e:
+            return e["table_no"], e["seat_no"]
     return t, s
 
 
@@ -933,7 +958,7 @@ def rebalance(admin=None):
     ids = [r["id"] for r in rows]
     if not ids:
         return 0, 0
-    need = max(1, min(tables_count(), -(-len(ids) // per)))
+    need = tables_needed(len(ids))
     for i, eid in enumerate(ids):
         x("UPDATE entries SET table_no=?, seat_no=? WHERE id=?",
           (i % need + 1, i // need + 1, eid))
@@ -954,18 +979,16 @@ def purchase(player_id, kind, admin=None):
     if price is None:
         return False, "Неизвестная операция"
 
-    if kind in ("buyin", "reentry") and stage != "rebuy":
-        return False, ("Ребай-период закончен — вход и ребаи закрыты"
-                       if stage == "addon" else
-                       "Идёт финальная стадия, входов и ребаев больше нет")
+    if kind in ("buyin", "reentry") and stage not in ("rebuy", "addon"):
+        return False, "Перерыв закончен — входов, ребаев и аддонов больше нет"
     if kind == "addon":
         if not price:
             return False, "Аддон в этом турнире не продаётся"
         if stage == "rebuy":
-            return False, ("Аддон продаётся в аддон-тайм. Нажмите «Закрыть ребаи», "
-                           "когда закончится ребай-период")
-        if stage == "final":
-            return False, "Аддон-тайм закончился, в финальной стадии покупок нет"
+            return False, ("Аддон продаётся в перерыв после 10 уровня. "
+                           "Нажмите «Закрыть ребаи», когда перерыв начнётся")
+        if stage != "addon":
+            return False, "Перерыв закончился, покупок больше нет"
         if q("SELECT 1 FROM purchases WHERE tid=? AND player_id=? AND kind='addon'",
              (row["id"], player_id), one=True):
             return False, "Аддон уже взят"
@@ -976,6 +999,9 @@ def purchase(player_id, kind, admin=None):
         e = q("SELECT * FROM entries WHERE tid=? AND player_id=?",
               (row["id"], player_id), one=True)
 
+    big = (stage == "addon")
+    chips = int(CFG["tournament"].get("addon_stack", 50000)) if big \
+        else int(CFG["tournament"].get("stack", 25000))
     seat_msg = ""
     if kind == "buyin":
         if e["arrived"]:
@@ -998,7 +1024,8 @@ def purchase(player_id, kind, admin=None):
     x("INSERT INTO purchases(tid, player_id, kind, amount, by_admin) VALUES(?,?,?,?,?)",
       (row["id"], player_id, kind, price, admin))
     log(admin, f"{kind} игроку {player_id}")
-    return True, {"buyin": "Вход оплачен", "reentry": "Ребай", "addon": "Аддон"}[kind] + seat_msg
+    what = {"buyin": "Вход оплачен", "reentry": "Ребай", "addon": "Аддон"}[kind]
+    return True, f"{what} · {chips:,} фишек".replace(",", " ") + seat_msg
 
 
 def bust(player_id, admin=None):
@@ -1020,7 +1047,18 @@ def bust(player_id, admin=None):
     log(admin, f"выбыл игрок {player_id}, место {place}")
     msg = f"{place} место"
     if check_final(admin):
-        msg += " · собран финальный стол"
+        return True, msg + " · собран финальный стол"
+    # После перерыва новых входов нет, поэтому лишние столы закрываем сами:
+    # стол на одного-двух человек — это не игра. В ребай-период не трогаем,
+    # там народ ещё приходит и возвращается.
+    if stage_of(t_row(tid())) == "play":
+        in_use = len({r["table_no"] for r in q(
+            """SELECT DISTINCT table_no FROM entries
+               WHERE tid=? AND arrived=1 AND busted=0 AND table_no>0""", (tid(),))})
+        need = tables_needed(alive_count())
+        if in_use > need:
+            n, tabs = rebalance(admin)
+            msg += f" · столы собраны: {tabs} вместо {in_use}"
     return True, msg
 
 
