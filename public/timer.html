@@ -467,20 +467,18 @@ button.warn2{color:#E0687A;margin-right:auto;}
 <script>
 (function(){
 "use strict";
-var KEY='unionpoker.timer.v2';
+var KEY='unionpoker.timer.v3';
 var DEF={
-  name:'Турнир клуба', sub:'Union Poker · спортивный покер', entries:36, len:10,
+  name:'Турнир клуба', sub:'Union Poker · спортивный покер', entries:36, len:12,
   struct:[
     '100 200 200','200 400 400','300 600 600','400 800 800','500 1000 1000',
     'перерыв 10',
-    '600 1200 1200','800 1600 1600','1000 2000 2000','1200 2400 2400','1500 3000 3000',
+    '600 1200 1200','1000 2000 2000','1500 3000 3000','2000 4000 4000','2500 5000 5000',
     'аддон 15',
-    '2000 4000 4000','2500 5000 5000','3000 6000 6000','4000 8000 8000','5000 10000 10000',
-    '6000 12000 12000','8000 16000 16000','10000 20000 20000','12000 24000 24000',
-    '15000 30000 30000','20000 40000 40000','25000 50000 50000','30000 60000 60000',
-    '40000 80000 80000','50000 100000 100000','60000 120000 120000','80000 160000 160000'
+    '7500 15000 15000','10000 20000 20000','15000 30000 30000',
+    '25000 50000 50000','50000 100000 100000'
   ].join('\n'),
-  tick:'Телефоны на беззвучный режим;Вход 1500 ₽ · ребай 1500 ₽;Вход и ребаи — до конца 10 уровня;Потом перерыв 15 минут и аддон 1500 ₽, один раз каждому;Финальный стол собирается при 9 игроках;Стартовый стек 25 000 · анте платит большой блайнд',
+  tick:'Телефоны на беззвучный режим;Вход 1500 ₽ · ребай 1500 ₽;Вход и ребаи — до конца 10 уровня;Перерыв 15 минут: поздняя регистрация и аддон по 1500 ₽ — 50 000 фишек;Финальный стол собирается при 9 игроках;Игра один на один идёт без анте',
   ltitle:'Рейтинг сезона',
   lrows:'',
   names:'',
@@ -501,7 +499,10 @@ function load(){
   }catch(e){}
   return {cfg:Object.assign({},DEF),idx:0,paused:true,left:null,endAt:null,players:0,view:'timer',final:false,alive:null,out:[],namesKey:''};
 }
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
+function save(){
+  try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
+  pushState();
+}
 var S=load();
 
 /* ---------- структура ---------- */
@@ -700,7 +701,9 @@ function render(){
     digits($('timer'),mmss(L));
     T('lvl',levelNo(S.idx));T('lvltotal',totalLevels());
     T('sb',fmt(c.sb));T('bb',fmt(c.bb));
-    $('antewrap').style.visibility=c.ante>0?'visible':'hidden';
+    // Один на один анте не платится — на экране его тогда нет.
+    var hu=(S.players|0)===2;
+    $('antewrap').style.visibility=(c.ante>0&&!hu)?'visible':'hidden';
     T('ante',fmt(c.ante));
     var nj=nextPlay(S.idx+1);
     if(nj>=0){
@@ -871,7 +874,9 @@ function renderWin(){
 }
 
 function renderFinal(L,c){
-  T('f_blinds',fmt(c.sb)+' / '+fmt(c.bb)+(c.ante>0?'  ·  анте '+fmt(c.ante):''));
+  var huF=(S.players|0)===2;
+  T('f_blinds',fmt(c.sb)+' / '+fmt(c.bb)+
+    (huF?'  ·  один на один, без анте':(c.ante>0?'  ·  анте '+fmt(c.ante):'')));
   T('f_time',mmss(L));
   T('f_sub','Осталось '+S.players+(S.players===1?' игрок':(S.players<5?' игрока':' игроков'))+' · все пересаживаются за один стол');
   var slots=Math.max(2,Math.min(10,S.cfg.finalAt|0||9));
@@ -974,6 +979,7 @@ $('s_reset').onclick=function(){
 
 /* ---------- клавиши ---------- */
 document.addEventListener('keydown',function(e){
+  if(SLAVE)return;                       // второй экран только повторяет главный
   if(setup.classList.contains('on')){ if(e.key==='Escape')closeSetup(); return; }
   if(bust.classList.contains('on')){ if(e.key==='Escape')closeBust(); return; }
   if(e.ctrlKey||e.metaKey||e.altKey)return;
@@ -1017,6 +1023,13 @@ setInterval(render,200);
 var API_DEFAULT='https://unionpoker.unicego22.workers.dev';
 var SYNC={on:false,bad:0,dot:null};
 
+/* Два телевизора. Главный таймер — тот, которым вы управляете, он отдаёт
+   своё состояние серверу (нужен ключ кассы: timer.html?master=КЛЮЧ).
+   Второй экран открывается как timer.html?screen=2 и просто повторяет
+   главный: уровень, блайнды, отсчёт, финальный стол. Клавиши на нём
+   не работают, чтобы случайно не разъехалось. */
+var MASTER='', SLAVE=false, LAST_PUSH=0, PUSH_T=null;
+
 function qp(name){
   var m=new RegExp('[?&]'+name+'=([^&]*)').exec(location.search);
   return m?decodeURIComponent(m[1]):'';
@@ -1029,6 +1042,48 @@ function syncBase(){
   }
   return String(u).replace(/\/+$/,'');
 }
+function initMode(){
+  MASTER=qp('master')||'';
+  SLAVE=qp('screen')==='2'||!!qp('slave');
+  if(SLAVE){
+    document.body.classList.add('slave');
+    var b=document.getElementById('bust'); // на втором экране ничего не нажимаем
+    if(b)b.style.display='none';
+  }
+}
+
+function pushState(){
+  if(!MASTER||SLAVE)return;
+  var base=syncBase(); if(!base)return;
+  // не чаще раза в секунду, но последнее состояние уходит обязательно
+  var wait=Math.max(0,1000-(Date.now()-LAST_PUSH));
+  clearTimeout(PUSH_T);
+  PUSH_T=setTimeout(function(){
+    LAST_PUSH=Date.now();
+    var st={idx:S.idx|0,paused:!!S.paused,left:left(),final:!!S.final,
+            view:S.view||'timer',players:S.players|0,cfg:S.cfg};
+    fetch(base+'/api/admin/timer?key='+encodeURIComponent(MASTER),{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({state:st})
+    }).catch(function(){});
+  },wait);
+}
+
+function applyState(d){
+  var t=d&&d.timer; if(!t)return;
+  if(t.cfg){
+    S.cfg=Object.assign({},DEF,t.cfg);
+    var r=parseStruct(S.cfg.struct,S.cfg.len);
+    if(r.list&&r.list.length)ST=r.list;
+  }
+  S.idx=Math.max(0,Math.min(ST.length-1,t.idx|0)); S.paused=!!t.paused; S.final=!!t.final; S.view=t.view||'timer';
+  // Сколько прошло — считаем по часам сервера, свои не трогаем
+  var gone=Math.max(0,(d.now|0)-(t.recv|0));
+  var ms=Math.max(0,(t.left|0)-(t.paused?0:gone));
+  if(S.paused){S.left=ms;S.endAt=null;} else {S.endAt=Date.now()+ms;S.left=ms;}
+  try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
+}
+
 function syncDot(){
   if(!SYNC.dot){
     var d=document.createElement('div');
@@ -1073,7 +1128,9 @@ function pull(){
       if(d.stage==='final'&&fin.length&&!S.final){
         S.final=true;S.view='final';beep(2);
       }
-      save();syncDot();render();
+      if(SLAVE)applyState(d);
+      try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
+      syncDot();render();
     })
     .catch(function(){
       clearTimeout(to);
@@ -1081,9 +1138,10 @@ function pull(){
       if(SYNC.bad>1){SYNC.on=false;syncDot();}
     });
 }
+initMode();
 syncDot();
 pull();
-setInterval(pull,8000);
+setInterval(pull,SLAVE?2000:8000);
 
 })();
 </script>
