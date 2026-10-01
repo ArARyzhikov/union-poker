@@ -965,8 +965,8 @@ function showSignup(){
       try {
         tg.requestContact(function(ok){
           if (!ok) { hint('Номер не отправлен — впишите его вручную'); return; }
-          hint('Номер получен, заканчиваем регистрацию...');
-          waitForProfile(0);
+          hint('Номер отправлен, подставляю...');
+          pullPhone(0);
         });
       } catch (e) { hint('Не получилось, впишите номер вручную'); }
     };
@@ -984,6 +984,25 @@ function showSignup(){
       else { hint(res.message || 'Не получилось'); $('suGo').disabled = false; }
     } catch (e) { hint('Нет связи с сервером'); $('suGo').disabled = false; }
   };
+}
+
+// Бот получил номер — забираем его в поле. Профиль не создаём: ник человек
+// выбирает сам, иначе в клубе окажутся имена из Telegram.
+async function pullPhone(tries){
+  if (tries > 15) { hint('Номер не пришёл — впишите его вручную'); return; }
+  try {
+    const r = await fetchLimited(withDev(API + '/phone'),
+                                 { headers: { 'X-Init-Data': initData() } }, 6000);
+    if (r.ok) {
+      const d = await r.json();
+      if (d.phone) {
+        $('suPhone').value = d.phone;
+        hint('Номер подставлен. Проверьте ник и нажмите «Вступить в клуб»');
+        return;
+      }
+    }
+  } catch (e) {}
+  setTimeout(() => pullPhone(tries + 1), 1000);
 }
 
 // после отправки контакта боту ждём, пока профиль появится на сервере

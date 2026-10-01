@@ -635,6 +635,17 @@ def check_final(admin=None):
     return True
 
 
+def timer_state():
+    """Состояние главного таймера, если он его присылал."""
+    raw = setting("timer_state")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
 def final_table():
     """Боксы финального стола: место → игрок. Пустые места тоже возвращаем."""
     row = t_row(tid())
@@ -1383,10 +1394,16 @@ def handle_update(u):
     if "contact" in m:
         c = m["contact"]
         if c.get("user_id") == frm.get("id"):
-            name = " ".join(filter(None, [frm.get("first_name"), frm.get("last_name")])) or "Игрок"
-            p = save_player(frm["id"], name, frm.get("username"), c.get("phone_number"))
-            send(chat, f"Номер сохранён. Вы участник клуба под номером <b>{p['number']}</b>.",
-                 inline=app_button())
+            phone = norm_phone(c.get("phone_number"))
+            if player:
+                # уже в клубе — просто обновим номер, имя не трогаем
+                x("UPDATE players SET phone=? WHERE id=?", (phone, player["id"]))
+                send(chat, "Номер обновлён.", inline=app_button())
+            else:
+                # профиль заведёт приложение — с тем ником, который человек впишет сам
+                setting(f"phone:{frm['id']}", phone)
+                send(chat, "Номер получен. Вернитесь в приложение и нажмите "
+                           "«Вступить в клуб».", inline=app_button())
         return
 
     if text == "/id":
@@ -1652,6 +1669,14 @@ class Handler(BaseHTTPRequestHandler):
                              "of": h["total"], "points": h["points"]} for h in history(p["id"])]
             })
 
+        if path == "/api/phone":
+            # Номер, которым человек поделился с ботом. Профиль по нему не
+            # создаётся: ник человек выбирает сам в форме регистрации.
+            u = self.tg_user()
+            if not u:
+                return self.json_out({"phone": ""}, 401)
+            return self.json_out({"phone": setting(f"phone:{u['id']}") or ""})
+
         if path == "/api/afisha":
             # Афиша для гостя: её видно всем, кто открыл приложение, ещё до
             # регистрации. Личных данных здесь нет — только то, что и так
@@ -1713,6 +1738,8 @@ class Handler(BaseHTTPRequestHandler):
                 "structure": CFG.get("structure", []),
                 "stack": CFG["tournament"].get("stack", 0),
                 "buyin": t["buyin"], "reentry": t["reentry"], "addon": t["addon"],
+                "timer": timer_state(),
+                "now": int(time.time() * 1000),
             })
 
         if path == "/api/admin/state":
@@ -1777,7 +1804,7 @@ class Handler(BaseHTTPRequestHandler):
             u = self.tg_user()
             if not u:
                 return self.json_out({"ok": False, "message": "Откройте приложение из бота"}, 401)
-            phone = norm_phone(body.get("phone"))
+            phone = norm_phone(body.get("phone")) or setting(f"phone:{u['id']}")
             if not phone or len(phone) < 12:
                 return self.json_out({"ok": False, "message": "Неверный номер телефона"})
             name = (body.get("name") or "").strip()
@@ -1828,6 +1855,17 @@ class Handler(BaseHTTPRequestHandler):
                 n = make_seating("admin")
                 return self.json_out({"ok": True, "message": f"Рассажено игроков: {n}",
                                       "seating": seating()})
+
+            if path == "/api/admin/timer":
+                # Главный таймер присылает сюда своё состояние, второй экран
+                # его забирает. Время считаем по часам сервера, чтобы разные
+                # часы на ноутбуках не разводили экраны.
+                st = body.get("state")
+                if not isinstance(st, dict):
+                    return self.json_out({"ok": False, "message": "Нет состояния"})
+                st["recv"] = int(time.time() * 1000)
+                setting("timer_state", json.dumps(st, ensure_ascii=False))
+                return self.json_out({"ok": True})
 
             if path == "/api/admin/stage":
                 ok, msg = set_stage(body.get("stage"), "admin")
