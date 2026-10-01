@@ -446,11 +446,11 @@ async function loadData(){
   DEMO = true;
   return MOCK;
 }
-async function apiPost(path, body){
+async function apiPost(path, body, ms){
   const r = await fetchLimited(withDev(API + path), {
     method:'POST', headers:{'Content-Type':'application/json','X-Init-Data': initData()},
     body: JSON.stringify(body||{})
-  }, 10000);
+  }, ms || 10000);
   return await r.json();
 }
 
@@ -957,7 +957,8 @@ function showSignup(){
       '<div class="up-row__sub" id="suHint" style="margin-top:10px;text-align:center"></div>' +
     '</div>';
 
-  const hint = t => { $('suHint').textContent = t || ''; };
+  const hint = t => { const h = $('suHint'); if (h) h.textContent = t || ''; };
+  window.suHintSay = hint;
 
   if (canContact) {
     $('suContact').onclick = () => {
@@ -979,25 +980,32 @@ function showSignup(){
     if (phone.replace(/\D/g, '').length < 10) { hint('Проверьте номер телефона'); return; }
     $('suGo').disabled = true; hint('Отправляю...');
     try {
-      const res = await apiPost('/signup', { phone: phone, name: nm });
+      const res = await apiPost('/signup', { phone: phone, name: nm }, 15000);
       if (res.ok) { hint('Готово! Открываю клуб...'); setTimeout(restart, 400); }
       else { hint(res.message || 'Не получилось'); $('suGo').disabled = false; }
-    } catch (e) { hint('Нет связи с сервером'); $('suGo').disabled = false; }
+    } catch (e) {
+      hint((e && e.name === 'AbortError') || /таймаут/.test(String(e && e.message))
+        ? 'Сервер не ответил. Нажмите ещё раз — номер и ник сохранены'
+        : 'Нет связи с сервером. Проверьте интернет и нажмите ещё раз');
+      $('suGo').disabled = false;
+    }
   };
 }
 
 // Бот получил номер — забираем его в поле. Профиль не создаём: ник человек
 // выбирает сам, иначе в клубе окажутся имена из Telegram.
 async function pullPhone(tries){
-  if (tries > 15) { hint('Номер не пришёл — впишите его вручную'); return; }
+  const say = t => { const h = document.getElementById('suHint'); if (h) h.textContent = t; };
+  if (tries > 15) { say('Номер не пришёл — впишите его вручную'); return; }
   try {
     const r = await fetchLimited(withDev(API + '/phone'),
                                  { headers: { 'X-Init-Data': initData() } }, 6000);
     if (r.ok) {
       const d = await r.json();
       if (d.phone) {
-        $('suPhone').value = d.phone;
-        hint('Номер подставлен. Проверьте ник и нажмите «Вступить в клуб»');
+        const f = document.getElementById('suPhone');
+        if (f) f.value = d.phone;
+        say('Номер подставлен. Проверьте ник и нажмите «Вступить в клуб»');
         return;
       }
     }
