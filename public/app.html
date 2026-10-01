@@ -45,6 +45,77 @@
   #guestBar .gb__t{font-weight:800;font-size:15px;}
   #guestBar .gb__s{color:var(--up-muted);font-size:12.5px;font-weight:600;margin:3px 0 10px;}
 
+  /* лента дней над афишей: точкой отмечены игровые дни */
+  .days__m{font-size:14px;font-weight:800;margin:2px 0 9px;}
+  .days{display:flex;gap:7px;overflow-x:auto;padding:0 0 4px;margin-bottom:14px;
+        scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+  .days::-webkit-scrollbar{display:none;}
+  .day{flex:none;width:50px;padding:8px 0 7px;text-align:center;border-radius:16px;
+       background:var(--up-surface);border:1.5px solid var(--up-line);cursor:default;}
+  .day i{display:block;font:700 10.5px var(--up-font-ui);font-style:normal;
+         color:var(--up-muted);text-transform:uppercase;letter-spacing:.06em;}
+  .day b{display:block;font:400 19px/1.1 var(--up-font-display);margin-top:3px;}
+  .day s{display:block;width:5px;height:5px;border-radius:50%;margin:5px auto 0;
+         background:transparent;}
+  .day--has{cursor:pointer;}
+  .day--has s{background:var(--up-gold-2);}
+  .day--on{background:linear-gradient(150deg,#F0DFAE,#D4AF5A);border-color:transparent;}
+  .day--on i{color:rgba(26,22,14,.7);}
+  .day--on b{color:#1A160E;}
+  .day--on s{background:#1A160E;}
+
+  /* динамика очков: одна линия, без осей и сетки */
+  .dyn{background:var(--up-surface);border:1.5px solid var(--up-line);
+       border-radius:var(--up-r-lg);padding:14px 15px 12px;margin-bottom:4px;}
+  .dyn__h{display:flex;align-items:baseline;gap:10px;margin-bottom:10px;}
+  .dyn__h b{font-size:14.5px;font-weight:800;}
+  .dyn__d{margin-left:auto;font-size:13px;font-weight:800;color:var(--up-ok);white-space:nowrap;}
+  .dyn svg{display:block;width:100%;height:84px;overflow:visible;}
+  /* --up-gold — градиент, для обводки и заливки нужен сплошной цвет */
+  .dyn__line{fill:none;stroke:var(--up-gold-2);stroke-width:2;stroke-linecap:round;
+             stroke-linejoin:round;vector-effect:non-scaling-stroke;}
+  .dyn__area{fill:url(#dynFade);stroke:none;}
+  .dyn__dot{fill:var(--up-gold-1);stroke:var(--up-surface);stroke-width:2;
+            vector-effect:non-scaling-stroke;}
+  .dyn__hit{fill:transparent;cursor:pointer;}
+  .dyn__cap{margin-top:9px;font-size:12.5px;font-weight:600;color:var(--up-muted);
+            min-height:17px;line-height:1.35;}
+  .dyn__cap b{color:var(--up-ink);font-weight:800;}
+
+  /* подиум рейтинга: первая тройка сезона */
+  .pod{display:grid;grid-template-columns:1fr 1.12fr 1fr;align-items:start;gap:8px;
+       margin:4px 0 14px;}
+  .pod__c{text-align:center;min-width:0;}
+  /* кружки разного размера, но стоят на одной линии */
+  .pod__base{height:84px;display:flex;align-items:flex-end;justify-content:center;}
+  .pod__r{border-radius:50%;display:grid;place-items:center;
+          font:800 16px var(--up-font-ui);color:#1A160E;
+          background:linear-gradient(150deg,#F0DFAE,#C9A24A);}
+  .pod__c--1 .pod__r{width:78px;height:78px;font-size:21px;
+                     box-shadow:0 0 0 3px var(--up-bg),0 0 0 5px var(--up-gold),
+                                0 8px 26px rgba(212,175,90,.35);}
+  .pod__c--2 .pod__r{width:60px;height:60px;background:linear-gradient(150deg,#E8EAEE,#A7ADB8);
+                     box-shadow:0 0 0 3px var(--up-bg),0 0 0 5px #B9BFC9;}
+  .pod__c--3 .pod__r{width:60px;height:60px;background:linear-gradient(150deg,#E2A878,#B06A38);
+                     box-shadow:0 0 0 3px var(--up-bg),0 0 0 5px #C07E4A;}
+  .pod__n{display:block;margin-top:11px;font-size:12.5px;font-weight:800;line-height:1.25;
+          word-break:break-word;}
+  .pod__p{display:block;margin-top:3px;font:400 17px var(--up-font-display);
+          color:var(--up-gold-text);}
+  .pod__m{display:block;margin-top:1px;font-size:10px;font-weight:700;color:var(--up-muted);
+          letter-spacing:.08em;text-transform:uppercase;}
+  /* ваша строка — всегда на виду, над навигацией */
+  .myrank{position:fixed;left:0;right:0;margin:0 auto;max-width:532px;z-index:20;
+          bottom:calc(88px + env(safe-area-inset-bottom,0px));
+          display:flex;align-items:center;gap:12px;padding:12px 15px;
+          border-radius:var(--up-r-lg);color:#1A160E;
+          background:linear-gradient(150deg,#F0DFAE,#D4AF5A);
+          box-shadow:0 10px 28px rgba(0,0,0,.55);}
+  .myrank .no{font:400 26px/1 var(--up-font-display);min-width:28px;}
+  .myrank b{display:block;font-size:14.5px;font-weight:800;}
+  .myrank small{display:block;font-size:12px;font-weight:700;opacity:.72;margin-top:2px;}
+  .myrank .pt{margin-left:auto;font:400 22px/1 var(--up-font-display);white-space:nowrap;}
+
   /* финальный стол: девять боксов с именами */
   .fin{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
        border-radius:var(--up-r-lg);padding:13px 14px;margin-bottom:12px;}
@@ -170,6 +241,7 @@
   <!-- ===== АФИША ===== -->
   <section class="screen" id="sc-afisha">
     <div class="up-section"><b>Афиша клуба</b><span class="up-chip" id="afishaCount"></span></div>
+    <div id="days"></div>
     <div id="afishaList" class="up-stack"></div>
   </section>
 
@@ -188,13 +260,16 @@
   <!-- ===== РЕЙТИНГ ===== -->
   <section class="screen" id="sc-rating">
     <div class="up-section"><b>Рейтинг сезона</b><span class="up-chip">2026</span></div>
+    <div id="podium"></div>
     <div id="ratingList"></div>
+    <div id="myRank"></div>
   </section>
 
   <!-- ===== ПРОФИЛЬ ===== -->
   <section class="screen" id="sc-profile">
     <div class="up-section"><b>Профиль</b></div>
     <div class="idcard" id="idcard"></div>
+    <div id="dyn"></div>
     <div class="up-section"><b>Достижения</b></div>
     <div class="ach" id="achList"></div>
     <div class="up-section"><b>История турниров</b></div>
@@ -565,8 +640,40 @@ function evRow(t){
     evChip(t) + '</div>';
 }
 
+// Лента ближайших дней: точка — игровой день, нажатие открывает турнир.
+function renderDays(all){
+  const box = $('days');
+  if (!all.length) { box.innerHTML = ''; return; }
+  const MON = ['января','февраля','марта','апреля','мая','июня',
+               'июля','августа','сентября','октября','ноября','декабря'];
+  const WD  = ['вс','пн','вт','ср','чт','пт','сб'];
+  const key = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') +
+                   '-' + String(d.getDate()).padStart(2,'0');
+  const byDay = {};
+  all.forEach(t => { const k = String(t.start || '').slice(0,10); if (k) byDay[k] = t; });
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const cells = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(today); d.setDate(today.getDate() + i);
+    cells.push({ d: d, k: key(d), t: byDay[key(d)] });
+  }
+  const first = cells.find(c => c.t) || cells[0];
+  const month = MON[first.d.getMonth()].replace(/я$/, 'ь').replace(/а$/, '');
+  const head = month.charAt(0).toUpperCase() + month.slice(1) + ' ' + first.d.getFullYear();
+
+  box.innerHTML = '<div class="days__m">' + head + '</div>' +
+    '<div class="days">' + cells.map(c =>
+      '<div class="day' + (c.t ? ' day--has' : '') +
+        (c.t && c.k === first.k ? ' day--on' : '') + '"' +
+        (c.t ? ' data-open="' + c.t.id + '"' : '') + '>' +
+        '<i>' + WD[c.d.getDay()] + '</i><b>' + c.d.getDate() + '</b><s></s></div>').join('') +
+    '</div>';
+}
+
 function renderAfisha(){
   const all = list();
+  renderDays(all);
   $('afishaCount').textContent = all.length + ' ' + plural(all.length,'турнир','турнира','турниров');
   if (!all.length) {
     $('afishaList').innerHTML = '<div class="up-empty">Афиша пока пустая.<br>Ближайшие турниры появятся здесь.</div>';
@@ -661,18 +768,115 @@ function eventPlayers(t){
   return html;
 }
 
+function shortName(v){
+  const parts = String(v || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return parts[0] || '';
+  return parts[0][0].toUpperCase() + '. ' + parts.slice(1).join(' ');
+}
+
 function renderRating(){
   const arr = DATA.rating || [];
-  $('ratingList').innerHTML = arr.length ? arr.map(r =>
+  if (!arr.length) {
+    $('podium').innerHTML = '';
+    $('myRank').innerHTML = '';
+    $('ratingList').innerHTML =
+      '<div class="up-empty">Рейтинг пустой.<br>Он появится после первого турнира.</div>';
+    return;
+  }
+
+  // Подиум: первая тройка сезона. Победитель в центре и крупнее.
+  const top = arr.slice(0, 3);
+  const order = top.length === 3 ? [top[1], top[0], top[2]]
+              : top.length === 2 ? [top[1], top[0]]
+                                 : [top[0]];
+  $('podium').innerHTML = '<div class="pod">' + order.map(r =>
+    '<div class="pod__c pod__c--' + r.place + '">' +
+      '<div class="pod__base"><div class="pod__r">' + initials(r.name) + '</div></div>' +
+      '<span class="pod__n">' + esc(r.me ? 'Вы' : shortName(r.name)) + '</span>' +
+      '<span class="pod__p">' + fmt(r.points) + '</span>' +
+      '<span class="pod__m">' + r.place + ' место</span>' +
+    '</div>').join('') + '</div>';
+
+  // Дальше обычный список, с четвёртого места
+  const rest = arr.slice(3);
+  $('ratingList').innerHTML = rest.map(r =>
     '<div class="rank' + (r.me ? ' rank--me' : '') + '"><div class="no">' + r.place + '</div>' +
     '<div class="up-avatar" style="width:34px;height:34px;font-size:11px">' + initials(r.name) + '</div>' +
     '<div class="nm">' + esc(r.me ? 'Вы · ' + r.name : r.name) + '<small>' + r.games + ' ' +
       plural(r.games,'турнир','турнира','турниров') + '</small></div>' +
-    '<div class="pt">' + fmt(r.points) + '</div></div>').join('')
-    : '<div class="up-empty">Рейтинг пустой.<br>Он появится после первого турнира.</div>';
+    '<div class="pt">' + fmt(r.points) + '</div></div>').join('') +
+    '<div style="height:74px"></div>';
+
+  // Своя строка всегда на виду, со сколько очков до места выше
+  const i = arr.findIndex(r => r.me);
+  if (i < 0) { $('myRank').innerHTML = ''; return; }
+  const me = arr[i];
+  const up = i > 0 ? arr[i - 1] : null;
+  const gap = up ? Math.max(0, up.points - me.points) : 0;
+  const sub = !up ? 'Первое место сезона'
+            : gap === 0 ? 'Вровень с ' + up.place + ' местом'
+            : 'До ' + up.place + ' места ' + fmt(gap) + ' ' +
+              plural(gap, 'очко', 'очка', 'очков');
+  $('myRank').innerHTML =
+    '<div class="myrank"><div class="no">' + me.place + '</div>' +
+    '<div><b>Вы · ' + esc(me.name) + '</b><small>' + sub + '</small></div>' +
+    '<div class="pt">' + fmt(me.points) + '</div></div>';
+}
+
+function renderDynamics(){
+  const box = $('dyn');
+  const h = (DATA.history || []).slice().reverse();   // от старых к новым
+  if (h.length < 2) { box.innerHTML = ''; return; }
+
+  // накопленные очки сезона после каждого турнира
+  let sum = 0;
+  const pts = h.map(x => { sum += (x.points || 0); return { v: sum, x: x }; });
+  const W = 300, H = 72, P = 6;
+  const max = Math.max.apply(null, pts.map(p => p.v));
+  const min = Math.min.apply(null, pts.map(p => p.v));
+  const span = Math.max(1, max - min);
+  const px = i => P + i * (W - P * 2) / Math.max(1, pts.length - 1);
+  const py = v => H - P - (v - min) / span * (H - P * 2);
+
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + px(i).toFixed(1) + ' ' + py(p.v).toFixed(1)).join(' ');
+  const area = line + ' L' + px(pts.length - 1).toFixed(1) + ' ' + H + ' L' + px(0).toFixed(1) + ' ' + H + ' Z';
+  const last = pts[pts.length - 1];
+  const gain = h[h.length - 1].points || 0;
+
+  box.innerHTML =
+    '<div class="dyn"><div class="dyn__h"><b>Динамика рейтинга</b>' +
+      '<span class="dyn__d">+' + fmt(gain) + ' за турнир</span></div>' +
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" ' +
+      'aria-label="Очки сезона по турнирам">' +
+      '<defs><linearGradient id="dynFade" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="#D4AF5A" stop-opacity=".22"/>' +
+        '<stop offset="1" stop-color="#D4AF5A" stop-opacity="0"/></linearGradient></defs>' +
+      '<path class="dyn__area" d="' + area + '"/>' +
+      '<path class="dyn__line" d="' + line + '"/>' +
+      pts.map((p, i) =>
+        '<circle class="dyn__dot" cx="' + px(i).toFixed(1) + '" cy="' + py(p.v).toFixed(1) + '" r="' +
+          (i === pts.length - 1 ? 4.5 : 0) + '"/>').join('') +
+      pts.map((p, i) =>
+        '<circle class="dyn__hit" data-i="' + i + '" cx="' + px(i).toFixed(1) + '" cy="' +
+          py(p.v).toFixed(1) + '" r="12"/>').join('') +
+    '</svg><div class="dyn__cap" id="dynCap"></div></div>';
+
+  const say = i => {
+    const p = pts[i], e = p.x;
+    $('dynCap').innerHTML = '<b>' + esc(e.title) + '</b> · ' + esc(e.date) + ' · ' +
+      (e.place ? e.place + ' место из ' + e.of + ' · ' : '') +
+      '+' + fmt(e.points) + ' очков · всего ' + fmt(p.v);
+  };
+  say(pts.length - 1);
+  box.querySelectorAll('.dyn__hit').forEach(c => {
+    const i = +c.dataset.i;
+    c.addEventListener('mouseenter', () => say(i));
+    c.addEventListener('click', () => say(i));
+  });
 }
 
 function renderProfile(){
+  renderDynamics();
   const m = DATA.me;
   $('idcard').innerHTML = '<div class="wm2">&#9824;</div>' +
     '<div class="top"><span>UNION POKER</span><span style="font-family:var(--up-font-ui);font-weight:800;letter-spacing:0;color:var(--up-gold-dim)">№ ' + m.number + '</span></div>' +
