@@ -1049,6 +1049,9 @@ function initMode(){
     document.body.classList.add('slave');
     var b=document.getElementById('bust'); // на втором экране ничего не нажимаем
     if(b)b.style.display='none';
+    // и настройки тут не нужны: всё приходит с ведущего экрана
+    var st=document.getElementById('setup');
+    if(st){ st.classList.remove('on'); st.style.display='none'; }
   }
 }
 
