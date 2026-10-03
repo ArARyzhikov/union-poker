@@ -64,6 +64,12 @@
              background:rgba(212,175,90,.14);color:var(--up-gold-text);}
   .noseat{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
           background:var(--up-warn-bg,rgba(230,180,80,.15));color:var(--up-warn);}
+  .prow{display:block;width:100%;text-align:left;background:var(--up-surface-2);
+        border:1px solid var(--up-line);border-radius:12px;padding:9px 11px;margin-bottom:6px;
+        color:inherit;font:inherit;cursor:pointer;}
+  .prow b{display:block;font-size:14.5px;font-weight:800;}
+  .prow small{display:block;color:var(--up-muted);font-size:12px;margin-top:2px;}
+  .prow .no{color:var(--up-bad);}
   .nodocs{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
           background:var(--up-bad-bg,rgba(224,104,122,.15));color:var(--up-bad);}
   .idok{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
@@ -712,6 +718,21 @@ const HELP = `
 не хранит. Посмотрели: <b>···</b> → <b>Документ проверен, 18+</b>. В карточке
 появится зелёная метка <b>паспорт ✓</b>, и в следующий раз спрашивать не нужно.</p>
 
+<h3>Игроки клуба</h3>
+<p><b>Ещё</b> → <b>Игроки клуба</b> — весь клуб списком: номер, ник, телефон,
+зарегистрирован сам или заведён кассиром, сколько турниров, подписаны ли
+документы, с какого числа в клубе. Нажатие на строку открывает карточку с
+оплатами и действиями.</p>
+<p>Удалить профиль можно только пока у человека нет оплат. С оплатами касса
+откажет: деньги вечера считаются по ним, и турнир сойдётся неверно. Для второго
+профиля того же человека удаление не нужно — объединяйте.</p>
+
+<h3>Ник занят</h3>
+<p>Ник в клубе один на человека: за столом объявляют по нику. Если игрок в
+приложении возьмёт занятый — ему так и напишут, и попросят другой. Если занятый
+ник вводит кассир, касса покажет, кто его носит, и спросит: это он или другой
+человек.</p>
+
 <h3>Двойные профили</h3>
 <p>Один человек может оказаться в клубе дважды: сначала его завёл кассир
 кнопкой <b>+ Игрок</b>, потом он сам зарегистрировался в приложении. У него
@@ -853,6 +874,13 @@ async function afishaMenu(){
            t.title + ' · ' + t.taken + '/' + t.seats + (t.status === 'live' ? ' · идёт' : ''),
     cls: 'mi' + (t.id === data.current ? ' up-btn--gold' : '')
   }));
+  const shown = (data.items || []).map(t => t.id);
+  (data.past || []).filter(t => shown.indexOf(t.id) < 0).forEach(t => items.push({
+    id: 't' + t.id,
+    label: '✓ ' + short(t.date) + ' — ' + t.title + ' · игроков ' + t.players +
+           (t.test ? ' · ТЕСТОВЫЙ' : ''),
+    cls: 'mi'
+  }));
   items.push({ id:'new', label:'+ Добавить турнир', cls:'mi' });
   if (data.pinned) items.push({ id:'auto', label:'Пусть касса выбирает сама', cls:'mi' });
   const act = await menu('Афиша клуба',
@@ -863,17 +891,107 @@ async function afishaMenu(){
   if (act === 'auto') { const r = await post('/pin', {}); toast(r.message||'Готово'); refresh(true); return; }
   const t_id = +act.slice(1);
   const t = (data.items || []).find(x => x.id === t_id);
-  const what = await menu(t ? t.title : 'Турнир',
-    t ? t.weekday + ', ' + t.date + ' · ' + t.time + ' · записано ' + t.taken : '', [
-      { id:'pin', label:'Работать с этим турниром', cls:'up-btn--gold mi' },
-      { id:'del', label:'Убрать из афиши', cls:'mi danger' }
-    ]);
+  const done = (data.past || []).find(x => x.id === t_id);
+  const acts = [{ id:'pin', label:'Работать с этим турниром', cls:'up-btn--gold mi' }];
+  if (done) acts.push(done.test
+    ? { id:'count', label:'Вернуть в зачёт рейтинга', cls:'mi' }
+    : { id:'test',  label:'Тестовый — снять очки рейтинга', cls:'mi' });
+  acts.push({ id:'del', label:'Убрать из афиши', cls:'mi danger' });
+  const what = await menu((t || done || {}).title || 'Турнир',
+    t ? t.weekday + ', ' + t.date + ' · ' + t.time + ' · записано ' + t.taken
+      : (done ? done.date + ' · сыграли ' + done.players +
+                (done.test ? ' · сейчас не идёт в рейтинг' : '') : ''), acts);
+  if (what === 'test'){
+    if (!await confirmDo('Сделать турнир тестовым?',
+      'Очки сезона за него снимутся у всех, турнир пропадёт из истории в профилях ' +
+      'и из рейтинга.\n\nДеньги и список игроков останутся на месте. ' +
+      'Решение можно отменить — турнир вернётся в зачёт.',
+      'Снять с зачёта')) { toast('Отменено'); return; }
+    const r = await post('/tournament-test', { tid: t_id, on: true });
+    toast(r.message || 'Готово'); refresh(true); return;
+  }
+  if (what === 'count'){
+    const r = await post('/tournament-test', { tid: t_id, on: false });
+    toast(r.message || 'Готово'); refresh(true); return;
+  }
   if (what === 'pin'){ const r = await post('/pin', { tid: t_id }); toast(r.message||'Готово'); refresh(true); }
   if (what === 'del'){
     if (!await confirmDo('Убрать турнир из афиши?',
       'Он исчезнет из приложения вместе со списком записавшихся.', 'Убрать')) { toast('Отменено'); return; }
     const r = await post('/delete-tournament', { tid: t_id });
     toast(r.message || 'Готово'); refresh(true);
+  }
+}
+
+/* ---------- игроки клуба ----------
+   То, ради чего обычно лезут в базу: кто вообще есть в клубе, с какого числа,
+   с Telegram или без, подписаны ли документы.                                */
+async function peopleSheet(){
+  let d;
+  try { d = await get('/people'); }
+  catch (e) { toast('Нет связи с сервером'); return; }
+  const list = d.players || [];
+  const html =
+    '<div class="help" style="margin-bottom:10px"><p>В клубе <b>' + d.total +
+    '</b> ' + word(d.total, 'игрок', 'игрока', 'игроков') +
+    (d.groups ? '. Похожих профилей: <b>' + d.groups + '</b> — смотрите «Двойные профили».' : '') +
+    '</p></div>' +
+    list.map(p =>
+      '<button class="prow" data-person="' + p.id + '">' +
+        '<b>№' + p.number + ' · ' + esc(p.name) + '</b>' +
+        '<small>' + (p.telegram ? 'приложение' : '<span class="no">без Telegram</span>') +
+        (p.phone ? ' · ' + esc(p.phone) : '') +
+        ' · турниров ' + p.games +
+        (p.docs ? ' · документы ✓' : ' · <span class="no">без документов</span>') +
+        (p.created ? ' · с ' + esc(p.created) : '') +
+        '</small></button>').join('');
+  show('Игроки клуба', html);
+  document.querySelectorAll('[data-person]').forEach(b => {
+    b.onclick = () => personCard(list.find(x => x.id === +b.dataset.person));
+  });
+}
+
+async function personCard(p){
+  if (!p) return;
+  const items = [
+    { id:'idok', label: p.id_ok ? 'Снять отметку о документе' : 'Документ проверен, 18+', cls:'mi' },
+    { id:'dupes', label:'Двойные профили', cls:'mi' },
+    { id:'del', label:'Удалить профиль', cls:'mi danger' }
+  ];
+  const act = await menu('№' + p.number + ' · ' + p.name,
+    (p.telegram ? 'Зарегистрирован в приложении' : 'Заведён кассиром, без Telegram') +
+    (p.phone ? ' · ' + p.phone : '') +
+    (p.fio ? ' · ' + p.fio : '') +
+    ' · турниров ' + p.games + ' · оплат ' + p.pays +
+    (p.money ? ' на ' + fmt(p.money) + ' ₽' : '') +
+    (p.id_ok ? ' · документ проверен ' + p.id_ok : ''), items);
+
+  if (act === 'idok'){
+    const r = await post('/id-check', { player_id: p.id });
+    toast(r.message || 'Готово'); refresh(true); return;
+  }
+  if (act === 'dupes'){ await dupesMenu(); return; }
+  if (act === 'del'){
+    const ok = await confirmDo('Удалить профиль?',
+      '№' + p.number + ' · ' + p.name + '\n\n' +
+      'Человек исчезнет из клуба и при следующем входе в приложение будет ' +
+      'регистрироваться заново, с новым номером. Записи на турниры и подписанные ' +
+      'документы пропадут.\n\n' +
+      'Если это просто второй профиль того же человека — закройте это окно и ' +
+      'объедините профили, тогда ничего не потеряется.',
+      'Удалить');
+    if (!ok) { toast('Отменено'); return; }
+    let r = await post('/delete-player', { player_id: p.id });
+    if (!r.ok && r.has_money) {
+      const twice = await confirmDo('Удалить вместе с оплатами?',
+        r.message + '\n\nЭти оплаты исчезнут из кассы, и выручка того турнира ' +
+        'уменьшится. Делайте так только если турнир тестовый.',
+        'Да, удалить всё');
+      if (!twice) { toast('Отменено'); return; }
+      r = await post('/delete-player', { player_id: p.id, force: true });
+    }
+    toast(r.message || 'Готово');
+    if (r.ok) { refresh(true); peopleSheet(); }
   }
 }
 
@@ -967,12 +1085,14 @@ $('btnMore').onclick = async () => {
       { id:'help',   label:'Справка по кассе', cls:'up-btn--gold mi' },
       { id:'afisha', label:'Афиша клуба', cls:'mi' },
       { id:'seatm',  label:'Режим рассадки', cls:'mi' },
+      { id:'people', label:'Игроки клуба', cls:'mi' },
       { id:'dupes',  label:'Двойные профили', cls:'mi' },
       { id:'backup', label:'Сделать копию базы', cls:'mi' },
       { id:'key',    label:'Ключ доступа', cls:'mi' },
       { id:'finish', label:'Завершить турнир', cls:'mi danger' }
     ]);
   if (act === 'help') { helpSheet(); return; }
+  if (act === 'people') { await peopleSheet(); return; }
   if (act === 'dupes') { await dupesMenu(); return; }
   if (act === 'backup'){
     const r = await post('/backup', {});

@@ -420,6 +420,8 @@ def init_db():
                       ("addon", "INTEGER DEFAULT 0"), ("stack", "INTEGER DEFAULT 0"),
                       ("seats", "INTEGER DEFAULT 36"), ("meta", "TEXT"), ("theme", "TEXT"),
                       ("auto", "INTEGER DEFAULT 0"),
+                      # тестовый турнир: сыгран, но в рейтинг и в историю не идёт
+                      ("test", "INTEGER DEFAULT 0"),
                       ("stage", "TEXT DEFAULT 'rebuy'")):
         add_column("tournaments", col, decl)
 
@@ -1672,6 +1674,41 @@ def plural(n, one, few, many):
     return many
 
 
+def award_points(t_id):
+    """Начисляет очки сезона по занятым местам."""
+    pts = CFG["points"]
+    n = 0
+    for e in q("SELECT * FROM entries WHERE tid=? AND arrived=1 AND COALESCE(house,0)=0",
+               (t_id,)):
+        place = e["place"] or 0
+        p = pts[place - 1] if 0 < place <= len(pts) else CFG["points_rest"]
+        x("UPDATE entries SET points=? WHERE id=?", (p, e["id"]))
+        n += 1
+    return n
+
+
+def set_test(t_id, on, admin=None):
+    """Тестовый турнир: сыгран по-настоящему, но в рейтинг не идёт.
+
+    Деньги и список игроков остаются на месте — убираются только очки,
+    места в профилях и запись в истории. Можно вернуть обратно.
+    """
+    t_id = int(t_id or 0)
+    row = t_row(t_id)
+    if not row:
+        return False, "Турнир не найден"
+    if on:
+        x("UPDATE tournaments SET test=1 WHERE id=?", (t_id,))
+        x("UPDATE entries SET points=0 WHERE tid=?", (t_id,))
+        log(admin or "admin", f"турнир #{t_id} отмечен тестовым, очки сняты")
+        return True, f"«{row['title']}» больше не идёт в рейтинг"
+    x("UPDATE tournaments SET test=0 WHERE id=?", (t_id,))
+    if row["status"] == "finished":
+        award_points(t_id)
+    log(admin or "admin", f"турнир #{t_id} снова в зачёте")
+    return True, f"«{row['title']}» снова идёт в рейтинг"
+
+
 def finish_tournament(admin=None):
     """Закрывает турнир и начисляет очки рейтинга."""
     if t_status() == "finished":
@@ -1683,12 +1720,7 @@ def finish_tournament(admin=None):
                        "Отметьте выбывших — тот, кто останется последним, получит первое место")
     if len(rest) == 1:
         x("UPDATE entries SET busted=1, place=1 WHERE id=?", (rest[0]["id"],))
-    pts = CFG["points"]
-    for e in q("SELECT * FROM entries WHERE tid=? AND arrived=1 AND COALESCE(house,0)=0",
-               (tid(),)):
-        place = e["place"] or 0
-        p = pts[place - 1] if 0 < place <= len(pts) else CFG["points_rest"]
-        x("UPDATE entries SET points=? WHERE id=?", (p, e["id"]))
+    award_points(tid())
     # записался и не пришёл — незачем хранить в сыгранном турнире
     x("DELETE FROM entries WHERE tid=? AND (arrived=0 OR COALESCE(house,0)=1)", (tid(),))
     x("UPDATE tournaments SET status='finished' WHERE id=?", (tid(),))
@@ -1720,17 +1752,22 @@ def achievements(player_id):
 
 
 def player_stats(player_id):
+    # тестовые турниры в личных показателях не учитываем
     row = q("""SELECT COUNT(*) AS games,
-                      COALESCE(SUM(points),0) AS points,
-                      COALESCE(MIN(NULLIF(place,0)), 0) AS best,
-                      SUM(CASE WHEN place BETWEEN 1 AND 9 THEN 1 ELSE 0 END) AS finals
-               FROM entries WHERE player_id=? AND arrived=1""", (player_id,), one=True)
+                      COALESCE(SUM(e.points),0) AS points,
+                      COALESCE(MIN(NULLIF(e.place,0)), 0) AS best,
+                      SUM(CASE WHEN e.place BETWEEN 1 AND 9 THEN 1 ELSE 0 END) AS finals
+               FROM entries e JOIN tournaments t ON t.id = e.tid
+               WHERE e.player_id=? AND e.arrived=1 AND COALESCE(t.test,0)=0""",
+            (player_id,), one=True)
     return dict(row)
 
 
 def rating():
     rows = q("""SELECT p.id, p.name, COUNT(e.id) AS games, COALESCE(SUM(e.points),0) AS points
-                FROM players p JOIN entries e ON e.player_id = p.id AND e.arrived = 1
+                FROM players p
+                JOIN entries e ON e.player_id = p.id AND e.arrived = 1
+                JOIN tournaments t ON t.id = e.tid AND COALESCE(t.test,0)=0
                 GROUP BY p.id HAVING points > 0
                 ORDER BY points DESC, games ASC LIMIT 30""")
     return [{"place": i + 1, "id": r["id"], "name": r["name"],
@@ -1749,6 +1786,7 @@ def history(player_id):
                        (SELECT COUNT(*) FROM entries e2 WHERE e2.tid = e.tid AND e2.arrived=1) AS total
                 FROM entries e JOIN tournaments t ON t.id = e.tid
                 WHERE e.player_id=? AND e.arrived=1 AND t.status='finished'
+                  AND COALESCE(t.test,0)=0
                 ORDER BY t.start DESC LIMIT 20""", (player_id,))
     return [dict(r) for r in rows]
 
@@ -2356,8 +2394,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/afisha":
             if not self.admin_ok():
                 return self.json_out({"error": "Нет доступа"}, 403)
+            past = q("""SELECT id, title, date, status, COALESCE(test,0) AS test,
+                               (SELECT COUNT(*) FROM entries e WHERE e.tid=t.id AND e.arrived=1)
+                                 AS players
+                        FROM tournaments t WHERE status='finished'
+                        ORDER BY start DESC LIMIT 10""")
             return self.json_out({"current": tid(), "pinned": bool(setting("pin_tid")),
-                                  "items": feed(12)})
+                                  "items": feed(12), "past": [dict(r) for r in past]})
 
         if path == "/api/admin/players.json":
             if not self.admin_ok():
@@ -2365,6 +2408,29 @@ class Handler(BaseHTTPRequestHandler):
             rows = q("""SELECT p.name, p.number FROM entries e JOIN players p ON p.id=e.player_id
                         WHERE e.tid=? ORDER BY e.id""", (tid(),))
             return self.json_out([{"name": r["name"], "number": r["number"]} for r in rows])
+
+        if path == "/api/admin/people":
+            # Все игроки клуба — то, что обычно смотрят прямо в базе.
+            if not self.admin_ok():
+                return self.json_out({"error": "Нет доступа"}, 403)
+            rows = q("""SELECT p.*,
+                          (SELECT COUNT(*) FROM entries e WHERE e.player_id=p.id) AS games,
+                          (SELECT COUNT(*) FROM purchases s WHERE s.player_id=p.id) AS pays,
+                          (SELECT COALESCE(SUM(amount),0) FROM purchases s
+                            WHERE s.player_id=p.id) AS money
+                        FROM players p ORDER BY p.number""")
+            out = []
+            for r in rows:
+                out.append({
+                    "id": r["id"], "number": r["number"], "name": r["name"],
+                    "phone": r["phone"] or "", "telegram": bool(r["tg_id"]),
+                    "fio": r["fio"] or "", "id_ok": r["id_ok"] or "",
+                    "created": (r["created"] or "")[:10],
+                    "games": r["games"], "pays": r["pays"], "money": r["money"],
+                    "docs": 0 if docs_pending(r["tg_id"]) else 1,
+                })
+            return self.json_out({"players": out, "total": len(out),
+                                  "groups": len(dupe_groups())})
 
         if path == "/api/admin/dupes":
             # Похожие профили: один человек записан дважды.
@@ -2573,6 +2639,31 @@ class Handler(BaseHTTPRequestHandler):
                 st["recv"] = int(time.time() * 1000)
                 setting("timer_state", json.dumps(st, ensure_ascii=False))
                 return self.json_out({"ok": True})
+
+            if path == "/api/admin/delete-player":
+                # Удаление профиля целиком. С оплатами не удаляем никогда:
+                # деньги вечера считаются по ним, и турнир сойдётся неверно.
+                pid = int(body.get("player_id") or 0)
+                p = q("SELECT * FROM players WHERE id=?", (pid,), one=True)
+                if not p:
+                    return self.json_out({"ok": False, "message": "Игрок не найден"})
+                pays = q("SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS s "
+                         "FROM purchases WHERE player_id=?", (pid,), one=True)
+                if pays["n"] and not body.get("force"):
+                    return self.json_out({"ok": False, "has_money": True, "message":
+                        f"У игрока {pays['n']} оплат на {pays['s']} ₽. Обычно такой профиль "
+                        "не удаляют, а объединяют с настоящим"})
+                x("DELETE FROM purchases WHERE player_id=?", (pid,))
+                x("DELETE FROM entries WHERE player_id=?", (pid,))
+                x("DELETE FROM consents WHERE player_id=?", (pid,))
+                x("DELETE FROM players WHERE id=?", (pid,))
+                log("admin", f"удалён профиль №{p['number']} {p['name']}")
+                return self.json_out({"ok": True,
+                                      "message": f"Профиль №{p['number']} {p['name']} удалён"})
+
+            if path == "/api/admin/tournament-test":
+                ok, msg = set_test(body.get("tid"), bool(body.get("on")), "admin")
+                return self.json_out({"ok": ok, "message": msg})
 
             if path == "/api/admin/merge":
                 ok, msg = merge_players(body.get("keep_id"), body.get("drop_id"), "admin")
