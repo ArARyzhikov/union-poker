@@ -1004,7 +1004,7 @@ document.addEventListener('keydown',function(e){
     if(document.fullscreenElement)document.exitFullscreen();
     else if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(function(){});
   }
-  else if(code==='KeyH'){var h=$('hint');h.style.display=h.style.display==='none'?'block':'none';}
+  else if(code==='KeyH'){var h=$('hint');var hide=h.style.display!=='none';h.style.display=hide?'none':'block';try{localStorage.setItem('timer_hint_hidden',hide?'1':'0');}catch(e){}}
 });
 
 /* при первом запуске сразу открыть настройки */
@@ -1052,6 +1052,14 @@ function initMode(){
     // и настройки тут не нужны: всё приходит с ведущего экрана
     var st=document.getElementById('setup');
     if(st){ st.classList.remove('on'); st.style.display='none'; }
+    // подсказка с клавишами на повторяющем экране не нужна
+    var hh=document.getElementById('hint');
+    if(hh)hh.style.display='none';
+  } else {
+    // на главном экране помним, что подсказку скрыли
+    try{ if(localStorage.getItem('timer_hint_hidden')==='1'){
+      var h2=document.getElementById('hint'); if(h2)h2.style.display='none';
+    } }catch(e){}
   }
 }
 
