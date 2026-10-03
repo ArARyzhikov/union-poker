@@ -346,6 +346,23 @@ def init_db():
             who    TEXT,
             action TEXT
         );
+
+        -- Подписи под документами клуба. Строки отсюда не удаляются и не
+        -- переписываются: это доказательство того, что человек согласился, и
+        -- с какой именно редакцией текста. Подписал заново — новая строка.
+        CREATE TABLE IF NOT EXISTS consents(
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id INTEGER,
+            tg_id     INTEGER,
+            code      TEXT NOT NULL,     -- oferta | pravila | pdn
+            version   TEXT NOT NULL,     -- редакция документа
+            doc_hash  TEXT,              -- отпечаток текста на момент подписи
+            fio       TEXT,
+            born      TEXT,
+            phone     TEXT,
+            ip        TEXT,
+            ts        TEXT DEFAULT (datetime('now'))
+        );
         """)
         db.commit()
 
@@ -357,6 +374,12 @@ def init_db():
     add_column("entries", "house", "INTEGER DEFAULT 0")
     add_column("entries", "table_no", "INTEGER DEFAULT 0")
     add_column("entries", "seat_no", "INTEGER DEFAULT 0")
+    # Для согласия на обработку данных нужно настоящее имя: ник «lamer» под
+    # документом ничего не значит. Ник остаётся тем, под которым объявляют.
+    add_column("players", "fio", "TEXT")
+    add_column("players", "born", "TEXT")
+    # Отметка администратора: документ на входе предъявлен, человеку 18+.
+    add_column("players", "id_ok", "TEXT")
     for col, decl in (("start", "TEXT"), ("time", "TEXT"), ("weekday", "TEXT"),
                       ("buyin", "INTEGER DEFAULT 0"), ("reentry", "INTEGER DEFAULT 0"),
                       ("addon", "INTEGER DEFAULT 0"), ("stack", "INTEGER DEFAULT 0"),
@@ -468,6 +491,173 @@ def save_player(tg_id, name, username, phone):
             (tg_id, name, username, phone, num))
     log(tg_id, f"регистрация: {name}")
     return q("SELECT * FROM players WHERE id=?", (pid,), one=True)
+
+
+# ----------------------------------------------------------------------------
+# ДОКУМЕНТЫ КЛУБА И ПОДПИСИ ПОД НИМИ
+#
+# Тексты лежат в public/docs/*.txt — обычные текстовые файлы, их правит клуб
+# без программиста. В начале файла шапка: version, title, required. Версия —
+# это редакция документа. Поменяли текст и подняли версию — у всех игроков
+# снова попросят подпись, старые подписи при этом остаются в базе.
+# ----------------------------------------------------------------------------
+
+DOCS_DIR = os.path.join(PUBLIC, "docs")
+DOC_ORDER = ("oferta", "pravila", "pdn")
+_DOCS = {"stamp": None, "items": []}
+
+
+def _yes(v):
+    return str(v or "").strip().lower() in ("yes", "y", "да", "1", "true")
+
+
+def load_docs():
+    """Читает документы с диска. Файл изменился — перечитываем сами."""
+    stamp = []
+    for code in DOC_ORDER:
+        p = os.path.join(DOCS_DIR, code + ".txt")
+        stamp.append(os.path.getmtime(p) if os.path.isfile(p) else 0)
+    if _DOCS["stamp"] == stamp:
+        return _DOCS["items"]
+
+    items = []
+    for code in DOC_ORDER:
+        p = os.path.join(DOCS_DIR, code + ".txt")
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                raw = f.read()
+        except OSError:
+            continue
+        head, _, body = raw.replace("\r\n", "\n").partition("\n\n")
+        meta = {}
+        for line in head.splitlines():
+            k, sep, v = line.partition(":")
+            if sep:
+                meta[k.strip().lower()] = v.strip()
+        body = body.strip()
+        items.append({
+            "code": code,
+            "title": meta.get("title") or code,
+            "subtitle": meta.get("subtitle", ""),
+            "version": meta.get("version") or "1",
+            "required": _yes(meta.get("required", "yes")),
+            "needs_fio": _yes(meta.get("needs_fio")),
+            "check": meta.get("check") or "Я прочитал документ и согласен",
+            "body": body,
+            "hash": hashlib.sha256(body.encode()).hexdigest()[:16],
+        })
+    _DOCS.update(stamp=stamp, items=items)
+    return items
+
+
+def doc_by_code(code):
+    for d in load_docs():
+        if d["code"] == code:
+            return d
+    return None
+
+
+def docs_signed(tg_id):
+    """Что человек уже подписал: код документа → редакция и дата."""
+    if not tg_id:
+        return {}
+    out = {}
+    for r in q("SELECT code, version, ts FROM consents WHERE tg_id=? ORDER BY id", (tg_id,)):
+        out[r["code"]] = {"version": r["version"], "ts": r["ts"]}
+    return out
+
+
+def docs_pending(tg_id):
+    """Какие обязательные документы человек ещё не подписал (или подписал старую редакцию)."""
+    signed = docs_signed(tg_id)
+    out = []
+    for d in load_docs():
+        if not d["required"]:
+            continue
+        s = signed.get(d["code"])
+        if not s or s["version"] != d["version"]:
+            out.append(d["code"])
+    return out
+
+
+def needs_fio(tg_id):
+    """Нужно ли спрашивать ФИО и дату рождения: только если такой документ не подписан."""
+    pend = set(docs_pending(tg_id))
+    return any(d["needs_fio"] and d["code"] in pend for d in load_docs())
+
+
+def fio_ok(v):
+    """Фамилия и имя как минимум. Отчество по желанию."""
+    parts = [p for p in re.split(r"[\s]+", str(v or "").strip()) if p]
+    if not 2 <= len(parts) <= 4:
+        return False
+    return all(re.fullmatch(r"[А-Яа-яЁёA-Za-z][А-Яа-яЁёA-Za-z'\-]+", p) for p in parts)
+
+
+def age_of(v):
+    """Возраст по дате рождения в виде 1990-05-17. Непонятная дата — ноль."""
+    try:
+        d = datetime.strptime(str(v or "").strip()[:10], "%Y-%m-%d")
+    except ValueError:
+        return 0
+    n = datetime.now()
+    age = n.year - d.year - ((n.month, n.day) < (d.month, d.day))
+    return age if 0 < age < 120 else 0
+
+
+def born_text(v):
+    """1990-05-17 → 17.05.1990, чтобы в документе стояла привычная дата."""
+    try:
+        return datetime.strptime(str(v or "").strip()[:10], "%Y-%m-%d").strftime("%d.%m.%Y")
+    except ValueError:
+        return ""
+
+
+def sign_docs(tg_id, codes, player=None, fio=None, born=None, ip=""):
+    """Записывает подписи. Строки только добавляются — ничего не перезаписываем."""
+    phone = (player["phone"] if player else "") or ""
+    pid = player["id"] if player else None
+    done = []
+    for code in codes:
+        d = doc_by_code(code)
+        if not d:
+            continue
+        # Время ставим сами: datetime('now') в SQLite пишет UTC, а в документе
+        # должно стоять местное время, как и в отметках администратора.
+        x("""INSERT INTO consents(player_id, tg_id, code, version, doc_hash,
+                                  fio, born, phone, ip, ts)
+             VALUES(?,?,?,?,?,?,?,?,?,?)""",
+          (pid, tg_id, code, d["version"], d["hash"], fio or None, born or None, phone, ip,
+           datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        done.append(d["title"])
+    if pid and (fio or born):
+        x("UPDATE players SET fio=COALESCE(?, fio), born=COALESCE(?, born) WHERE id=?",
+          (fio or None, born or None, pid))
+    if done:
+        log(tg_id, "подписаны документы: " + "; ".join(done))
+    return done
+
+
+def docs_for(tg_id, player=None):
+    """Документы с отметкой, что из них подписано — для экрана в приложении."""
+    signed = docs_signed(tg_id)
+    out = []
+    for d in load_docs():
+        s = signed.get(d["code"])
+        # Текст отдаём как он есть, с метками {{ФИО}} и прочими: приложение
+        # подставляет их на ходу, пока человек печатает.
+        body = d["body"]
+        out.append({
+            "code": d["code"], "title": d["title"], "subtitle": d["subtitle"],
+            "version": d["version"], "required": d["required"],
+            "needs_fio": d["needs_fio"], "check": d["check"], "body": body,
+            "signed": bool(s and s["version"] == d["version"]),
+            "signed_at": (s["ts"] if s else ""),
+            "signed_version": (s["version"] if s else ""),
+        })
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -1714,7 +1904,8 @@ def check_init_data(init_data):
 MIME = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
         ".js": "text/javascript; charset=utf-8", ".png": "image/png",
         ".jpg": "image/jpeg", ".svg": "image/svg+xml", ".ico": "image/x-icon",
-        ".json": "application/json; charset=utf-8"}
+        ".json": "application/json; charset=utf-8",
+        ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8"}
 
 
 def my_state(t, player_id):
@@ -1787,6 +1978,26 @@ class Handler(BaseHTTPRequestHandler):
         """Данные Telegram того, кто открыл приложение (даже если он ещё не участник)."""
         return check_init_data(self.headers.get("X-Init-Data"))
 
+    def tg_id(self):
+        """Телеграм-номер открывшего приложение — даже если профиля в клубе ещё нет."""
+        u = self.tg_user()
+        if u:
+            return u.get("id")
+        if CFG.get("dev"):
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if "dev_id" in qs:
+                try:
+                    return int(qs["dev_id"][0])
+                except ValueError:
+                    return None
+        return None
+
+    def client_ip(self):
+        """Адрес, с которого пришла подпись. За Cloudflare настоящий — в заголовке."""
+        return (self.headers.get("CF-Connecting-IP")
+                or (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+                or self.client_address[0])
+
     def admin_ok(self):
         key = self.headers.get("X-Admin-Key")
         if not key:
@@ -1826,7 +2037,12 @@ class Handler(BaseHTTPRequestHandler):
                        "since": (p["created"] or "")[:4],
                        "tournaments": s["games"], "best": s["best"], "finals": s["finals"] or 0,
                        "points": s["points"], "rank": my_rank(p["id"]) or "—",
+                       "fio": p["fio"] or "", "born": p["born"] or "",
                        "achievements": achievements(p["id"])},
+                "docs": {"pending": docs_pending(p["tg_id"]),
+                         "signed": [{"title": d["title"], "version": d["version"],
+                                     "at": d["signed_at"]}
+                                    for d in docs_for(p["tg_id"], p) if d["signed"]]},
                 "tournaments": items,
                 "live": {"status": live["status"], "id": live["id"], "title": live["title"],
                          "alive": alive_count(),
@@ -1846,6 +2062,21 @@ class Handler(BaseHTTPRequestHandler):
                             "points": r["points"], "me": r["id"] == p["id"]} for r in rating()],
                 "history": [{"date": h["date"], "title": h["title"], "place": h["place"],
                              "of": h["total"], "points": h["points"]} for h in history(p["id"])]
+            })
+
+        if path == "/api/docs":
+            # Документы клуба и отметка, что из них человек уже подписал.
+            tg_id = self.tg_id()
+            if tg_id is None:
+                return self.json_out({"error": "Откройте приложение из бота"}, 401)
+            p = q("SELECT * FROM players WHERE tg_id=?", (tg_id,), one=True)
+            return self.json_out({
+                "docs": docs_for(tg_id, p),
+                "pending": docs_pending(tg_id),
+                "need_fio": needs_fio(tg_id),
+                "fio": (p["fio"] if p else "") or "",
+                "born": (p["born"] if p else "") or "",
+                "phone": (p["phone"] if p else "") or "",
             })
 
         if path == "/api/phone":
@@ -1924,7 +2155,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/state":
             if not self.admin_ok():
                 return self.json_out({"error": "Нет доступа"}, 403)
-            rows = q("""SELECT p.id, p.name, p.number, e.arrived, e.busted, e.place,
+            rows = q("""SELECT p.id, p.name, p.number, p.tg_id, p.fio, p.born, p.id_ok,
+                               e.arrived, e.busted, e.place,
                                e.wait, e.table_no, e.seat_no, COALESCE(e.house,0) AS house,
                                (SELECT COUNT(*) FROM purchases s
                                  WHERE s.tid=e.tid AND s.player_id=p.id AND s.kind='reentry') AS reentry,
@@ -1934,10 +2166,18 @@ class Handler(BaseHTTPRequestHandler):
                         WHERE e.tid=? ORDER BY e.wait, p.name""", (tid(),))
             money = q("""SELECT kind, COUNT(*) AS n, COALESCE(SUM(amount),0) AS sum
                          FROM purchases WHERE tid=? GROUP BY kind""", (tid(),))
+            plist = []
+            for r in rows:
+                d = dict(r)
+                tg = d.pop("tg_id", None)
+                d["docs"] = 0 if docs_pending(tg) else 1
+                d["id_ok"] = d.get("id_ok") or ""
+                d["fio"] = d.get("fio") or ""
+                plist.append(d)
             return self.json_out({
                 "tournament": current_tournament(),
                 "pinned": bool(setting("pin_tid")),
-                "players": [dict(r) for r in rows],
+                "players": plist,
                 "alive": alive_count(),
                 "seating": seating(),
                 "seatmap": seat_map(),
@@ -1960,6 +2200,34 @@ class Handler(BaseHTTPRequestHandler):
             rows = q("""SELECT p.name, p.number FROM entries e JOIN players p ON p.id=e.player_id
                         WHERE e.tid=? ORDER BY e.id""", (tid(),))
             return self.json_out([{"name": r["name"], "number": r["number"]} for r in rows])
+
+        if path == "/api/admin/consents":
+            # Кто подписал документы клуба, когда и какую редакцию.
+            if not self.admin_ok():
+                return self.json_out({"error": "Нет доступа"}, 403)
+            docs = load_docs()
+            rows = q("""SELECT id, tg_id, name, number, phone, fio, born, id_ok
+                        FROM players ORDER BY number""")
+            out = []
+            for r in rows:
+                signed = docs_signed(r["tg_id"])
+                out.append({
+                    "id": r["id"], "name": r["name"], "number": r["number"],
+                    "phone": r["phone"] or "", "fio": r["fio"] or "",
+                    "born": born_text(r["born"]), "age": age_of(r["born"]),
+                    "id_ok": r["id_ok"] or "",
+                    "ok": not docs_pending(r["tg_id"]),
+                    "docs": [{"title": d["title"], "code": d["code"],
+                              "version": d["version"],
+                              "signed": bool(signed.get(d["code"])
+                                             and signed[d["code"]]["version"] == d["version"]),
+                              "at": (signed.get(d["code"]) or {}).get("ts", ""),
+                              "old": (signed.get(d["code"]) or {}).get("version", "")}
+                             for d in docs],
+                })
+            return self.json_out({"players": out,
+                                  "docs": [{"code": d["code"], "title": d["title"],
+                                            "version": d["version"]} for d in docs]})
 
         # --- статика ---
         rel = path.lstrip("/") or "app.html"
@@ -2000,10 +2268,52 @@ class Handler(BaseHTTPRequestHandler):
             return self.json_out({"ok": True, "message": "Добро пожаловать в клуб",
                                   "number": p["number"]})
 
+        if path == "/api/consent":
+            # Подпись под документами клуба. Пишем всё, чем потом можно
+            # подтвердить согласие: редакцию, отпечаток текста, время, адрес.
+            tg_id = self.tg_id()
+            if tg_id is None:
+                return self.json_out({"ok": False, "message": "Откройте приложение из бота"}, 401)
+            p = q("SELECT * FROM players WHERE tg_id=?", (tg_id,), one=True)
+            if not p:
+                return self.json_out({"ok": False, "message": "Сначала вступите в клуб"})
+
+            accept = [str(c) for c in (body.get("accept") or [])]
+            need = docs_pending(tg_id)
+            missing = [c for c in need if c not in accept]
+            if missing:
+                titles = ", ".join((doc_by_code(c) or {}).get("title", c) for c in missing)
+                return self.json_out({"ok": False,
+                                      "message": f"Не отмечено: {titles}"})
+
+            fio = re.sub(r"\s+", " ", str(body.get("fio") or "").strip())
+            born = str(body.get("born") or "").strip()[:10]
+            if needs_fio(tg_id):
+                if not fio_ok(fio):
+                    return self.json_out({"ok": False,
+                                          "message": "Впишите фамилию и имя как в документе"})
+                age = age_of(born)
+                if not age:
+                    return self.json_out({"ok": False, "message": "Проверьте дату рождения"})
+                if age < 18:
+                    return self.json_out({"ok": False,
+                                          "message": "В клуб допускаются только с 18 лет"})
+
+            done = sign_docs(tg_id, accept, player=p, fio=fio, born=born, ip=self.client_ip())
+            if not done:
+                return self.json_out({"ok": False, "message": "Нечего подписывать"})
+            return self.json_out({"ok": True, "message": "Документы подписаны",
+                                  "pending": docs_pending(tg_id)})
+
         if path == "/api/register":
             p = self.who()
             if not p:
                 return self.json_out({"error": "Откройте приложение из бота"}, 401)
+            if body.get("action") != "cancel" and docs_pending(p["tg_id"]):
+                # Играть без подписанных документов нельзя — это требование оферты
+                # и согласия на обработку данных, а не прихоть приложения.
+                return self.json_out({"ok": False, "need_docs": True,
+                                      "message": "Сначала подпишите документы клуба"})
             t_id = int(body.get("tid") or tid())
             ok, msg = (register_player(p["id"], t_id) if body.get("action") != "cancel"
                        else unregister_player(p["id"], t_id))
@@ -2046,6 +2356,21 @@ class Handler(BaseHTTPRequestHandler):
                 st["recv"] = int(time.time() * 1000)
                 setting("timer_state", json.dumps(st, ensure_ascii=False))
                 return self.json_out({"ok": True})
+
+            if path == "/api/admin/id-check":
+                # Администратор посмотрел документ на входе: человеку 18+ и это он.
+                pid = int(body.get("player_id") or 0)
+                row = q("SELECT name, id_ok FROM players WHERE id=?", (pid,), one=True)
+                if not row:
+                    return self.json_out({"ok": False, "message": "Игрок не найден"})
+                if row["id_ok"]:
+                    x("UPDATE players SET id_ok=NULL WHERE id=?", (pid,))
+                    log("admin", f"снята отметка о документе: {row['name']}")
+                    return self.json_out({"ok": True, "message": "Отметка снята", "id_ok": ""})
+                stamp = datetime.now().strftime("%d.%m.%Y %H:%M")
+                x("UPDATE players SET id_ok=? WHERE id=?", (stamp, pid))
+                log("admin", f"документ проверен: {row['name']}")
+                return self.json_out({"ok": True, "message": "Документ проверен", "id_ok": stamp})
 
             if path == "/api/admin/stage":
                 ok, msg = set_stage(body.get("stage"), "admin")

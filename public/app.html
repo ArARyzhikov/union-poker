@@ -210,6 +210,45 @@
   .plist i{width:24px;height:24px;border-radius:50%;background:var(--up-surface-2);border:1px solid var(--up-line);
            color:var(--up-gold-text);font:800 11px/22px var(--up-font-ui);text-align:center;font-style:normal;flex:none;}
   .rules li{margin-bottom:10px;}
+
+  /* ---- документы клуба ---- */
+  .doc{background:var(--up-surface);border:1px solid var(--up-line);border-radius:var(--up-r);
+       padding:14px;margin-bottom:12px;}
+  .doc__h{font:400 19px/1.2 var(--up-font-display);color:var(--up-gold-text);margin-bottom:3px;}
+  .doc__v{font-size:12px;color:var(--up-muted);margin-bottom:10px;}
+  .doc__body{max-height:200px;overflow-y:auto;-webkit-overflow-scrolling:touch;
+             background:rgba(0,0,0,.25);border:1px solid var(--up-line);border-radius:var(--up-r-sm);
+             padding:12px 13px;font-size:13.5px;line-height:1.55;color:#D9D2C2;}
+  .doc__body.open{max-height:none;overflow:visible;}
+  .doc__body h4{font:800 13px/1.3 var(--up-font-ui);color:var(--up-gold-text);
+                text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px;}
+  .doc__body h4:first-child{margin-top:0;}
+  .doc__body p{margin:0 0 8px;}
+  .doc__body ul{margin:0 0 8px;padding-left:18px;}
+  .doc__body li{margin-bottom:4px;}
+  .doc__more{display:block;width:100%;margin-top:8px;background:none;border:0;
+             color:var(--up-gold-text);font:700 13px var(--up-font-ui);padding:6px;cursor:pointer;}
+  .chk{display:flex;gap:11px;align-items:flex-start;margin-top:12px;cursor:pointer;
+       font-size:14px;line-height:1.45;font-weight:600;color:#E3D9BD;}
+  .chk input{position:absolute;opacity:0;width:0;height:0;}
+  .chk i{width:24px;height:24px;flex:none;border-radius:7px;border:2px solid var(--up-line);
+         background:rgba(0,0,0,.3);position:relative;transition:.15s;}
+  .chk i::after{content:'';position:absolute;left:7px;top:3px;width:6px;height:12px;
+                border:solid #0E0C0B;border-width:0 2.5px 2.5px 0;transform:rotate(45deg) scale(0);
+                transition:.15s;}
+  .chk input:checked + i{background:var(--up-gold-2);border-color:var(--up-gold-2);}
+  .chk input:checked + i::after{transform:rotate(45deg) scale(1);}
+  .doc__ok{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:13.5px;
+           font-weight:700;color:#8FD39A;}
+  .docnote{background:rgba(212,175,90,.08);border:1px solid rgba(212,175,90,.3);
+           border-radius:var(--up-r-sm);padding:11px 12px;font-size:13px;line-height:1.5;
+           color:#E3D9BD;margin-bottom:14px;}
+  .docbn{display:flex;gap:11px;align-items:center;background:rgba(212,175,90,.1);
+         border:1px solid rgba(212,175,90,.35);border-radius:var(--up-r);padding:12px 13px;
+         margin-bottom:12px;cursor:pointer;}
+  .docbn b{display:block;font-size:14.5px;color:var(--up-gold-text);}
+  .docbn small{display:block;color:var(--up-muted);font-size:12.5px;margin-top:2px;}
+  .docbn span{margin-left:auto;color:var(--up-gold-text);font-size:20px;flex:none;}
 </style>
 
 <div class="app">
@@ -221,6 +260,7 @@
 
   <!-- ===== ГЛАВНАЯ ===== -->
   <section class="screen screen--on" id="sc-home">
+    <div id="docBox"></div>
     <div id="liveBox"></div>
     <div class="up-card hero" id="heroCard"></div>
 
@@ -270,6 +310,8 @@
     <div class="up-section"><b>Профиль</b></div>
     <div class="idcard" id="idcard"></div>
     <div id="dyn"></div>
+    <div class="up-section"><b>Документы клуба</b></div>
+    <div id="docsMine"></div>
     <div class="up-section"><b>Достижения</b></div>
     <div class="ach" id="achList"></div>
     <div class="up-section"><b>История турниров</b></div>
@@ -366,6 +408,8 @@ const MOCK = {
       place: 0, table: 0, seat: 0, players: ['Иван Попов'], waitlist: [] }
   ],
   live: { status: 'open', id: 1, title: '', alive: 0, seating: [] },
+  docs: { pending: [], signed: [{ title: 'Публичная оферта', version: '2026-09',
+                                  at: '2026-10-01 19:40' }] },
   structure: { levels: [[100,200,200],[200,400,400],[300,600,600],[400,800,800],[500,1000,1000],
                         'перерыв 10',[1000,2000,2000],[1500,3000,3000]],
                minutes: 10, stack: 25000, chips: [[25,100],[5,500],[10,1000],[2,5000]],
@@ -566,6 +610,7 @@ function evChip(t){
 
 /* ---------- экраны ---------- */
 function renderHome(){
+  renderDocBanner();
   const all = list();
   const t = all[0];
   if (!t) { $('heroCard').innerHTML = '<div class="up-empty">Афиша пока пустая</div>'; return; }
@@ -889,6 +934,8 @@ function renderProfile(){
         plural(m.tournaments,'турнир','турнира','турниров') + '</small></div>' +
       '<div><b>' + (m.best || '—') + '</b><small>лучшее</small></div></div>';
 
+  renderMyDocs();
+
   const ach = m.achievements || [];
   $('achList').innerHTML = ach.length ? ach.map(a =>
     '<div class="' + (a.done ? '' : 'off') + '"><i>' + esc(a.icon) + '</i>' + esc(a.title) + '</div>').join('')
@@ -903,6 +950,40 @@ function renderProfile(){
 
 function renderRules(){
   $('rulesList').innerHTML = (DATA.rules||[]).map(r => '<li>' + esc(r) + '</li>').join('');
+}
+
+/* В профиле видно, что и когда человек подписал, и можно перечитать тексты. */
+function renderMyDocs(){
+  const box = $('docsMine');
+  if (!box) return;
+  if (GUEST) { box.innerHTML = ''; return; }
+  const d = DATA.docs || {};
+  const signed = d.signed || [];
+  const pend = d.pending || [];
+  box.innerHTML =
+    (signed.length
+      ? signed.map(s => '<div class="up-row"><div class="up-row__body">' +
+          '<div class="up-row__title">' + esc(s.title) + '</div>' +
+          '<div class="up-row__sub">Редакция ' + esc(s.version) + ' · подписано ' +
+          esc(dateRu(s.at)) + '</div></div><span class="up-chip">&#10003;</span></div>').join('')
+      : '<div class="up-empty">Пока ничего не подписано</div>') +
+    '<button class="up-btn up-btn--soft up-btn--block" id="docsOpen" style="margin-top:10px">' +
+      (pend.length ? 'Подписать документы' : 'Открыть документы') + '</button>';
+  $('docsOpen').onclick = () => showDocs();
+}
+
+/* Пока документы не подписаны — золотая полоса на главной. Нажатие ведёт
+   на экран подписания. Играть без подписи сервер всё равно не даст. */
+function renderDocBanner(){
+  const box = $('docBox');
+  if (!box) return;
+  const pend = (DATA.docs && DATA.docs.pending) || [];
+  if (GUEST || DEMO || !pend.length) { box.innerHTML = ''; return; }
+  box.innerHTML =
+    '<div class="docbn" id="docBn"><div><b>Подпишите документы клуба</b>' +
+    '<small>Оферта, правила и согласие на обработку данных — одна минута. ' +
+    'Без них нельзя записаться на турнир.</small></div><span>&#8250;</span></div>';
+  $('docBn').onclick = () => showDocs();
 }
 
 /* ---------- нет связи ---------- */
@@ -925,6 +1006,7 @@ function tgUser(){
   try { return (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || null; } catch (e) { return null; }
 }
 function showSignup(){
+  shellSave();
   const gb = document.getElementById('guestBar');
   if (gb) gb.remove();
   const u = tgUser();
@@ -1029,6 +1111,179 @@ function restart(){
   location.reload();
 }
 
+/* Экраны регистрации и документов занимают весь .app. Чтобы вернуться
+   в приложение, не перезагружая его, сохраняем разметку заранее. */
+let SHELL = null;
+function shellSave(){
+  if (SHELL === null) {
+    const a = document.querySelector('.app');
+    SHELL = a ? a.innerHTML : '';
+  }
+}
+function shellBack(){
+  const a = document.querySelector('.app');
+  if (!a || !SHELL) { location.reload(); return; }
+  a.innerHTML = SHELL;
+  const tb = document.querySelector('.up-tabbar');
+  if (tb) tb.style.display = '';
+  try { $('me').textContent = initials(DATA.me.name); renderAll(); } catch (e) {}
+  go('home');
+  window.scrollTo({ top: 0 });
+}
+
+/* ---------- документы клуба ----------
+   Тексты приходят с сервера (/api/docs) — там же видно, что человек уже
+   подписал. Подпись — это отметка в базе: кто, когда, какая редакция.      */
+function docHtml(body){
+  const out = [];
+  let ul = [];
+  const flush = () => { if (ul.length) { out.push('<ul>' + ul.join('') + '</ul>'); ul = []; } };
+  String(body || '').split('\n').forEach(line => {
+    const s = line.trim();
+    if (!s) return;
+    if (s.indexOf('## ') === 0) { flush(); out.push('<h4>' + esc(s.slice(3)) + '</h4>'); return; }
+    if (s.indexOf('- ') === 0) { ul.push('<li>' + esc(s.slice(2)) + '</li>'); return; }
+    flush(); out.push('<p>' + esc(s) + '</p>');
+  });
+  flush();
+  return out.join('');
+}
+
+// В согласии на обработку данных стоят метки {{ФИО}}, {{РОЖДЕНИЕ}} и другие.
+// Подставляем их прямо во время набора, чтобы человек видел, что подписывает.
+function fillDoc(body, v){
+  const born = String(v.born || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const now = new Date();
+  const two = n => (n < 10 ? '0' : '') + n;
+  return String(body || '')
+    .replace(/\{\{ФИО\}\}/g, v.fio || '______________________')
+    .replace(/\{\{РОЖДЕНИЕ\}\}/g, born ? born[3] + '.' + born[2] + '.' + born[1] : '__.__.____')
+    .replace(/\{\{ТЕЛЕФОН\}\}/g, v.phone || '__________')
+    .replace(/\{\{ДАТА\}\}/g, two(now.getDate()) + '.' + two(now.getMonth() + 1) + '.' + now.getFullYear());
+}
+
+function dateRu(ts){
+  const m = String(ts || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? m[3] + '.' + m[2] + '.' + m[1] + ' в ' + m[4] + ':' + m[5] : '';
+}
+
+async function showDocs(){
+  shellSave();
+  let d;
+  try {
+    const r = await fetchLimited(withDev(API + '/docs'),
+                                 { headers: { 'X-Init-Data': initData() } }, 10000);
+    if (!r.ok) throw new Error('сервер ответил ' + r.status);
+    d = await r.json();
+  } catch (e) {
+    toast('Не получилось загрузить документы — проверьте связь');
+    return;
+  }
+
+  const docs = d.docs || [];
+  if (!docs.length) { toast('Документы не загрузились — попробуйте позже'); return; }
+  const todo = docs.filter(x => x.required && !x.signed);
+  const allSigned = todo.length === 0;
+
+  document.querySelector('.up-tabbar').style.display = 'none';
+  document.querySelector('.app').innerHTML =
+    '<div class="up-header"><div class="up-logo"></div>' +
+      '<div class="up-wordmark"><b>UNION</b><small>POKER</small></div></div>' +
+    '<button class="back" id="dcBack">‹ ' + (allSigned ? 'В приложение' : 'Позже') + '</button>' +
+    '<div class="up-section"><b>Документы клуба</b>' +
+      (allSigned ? '<span class="up-chip">подписаны</span>' : '') + '</div>' +
+    (allSigned
+      ? '<div class="docnote">Всё подписано. Ниже — те же тексты, их можно перечитать ' +
+        'в любой момент. Если клуб обновит редакцию, приложение попросит подписать заново.</div>'
+      : '<div class="docnote">Клуб проводит турниры по спортивному покеру <b>не на деньги</b>: ' +
+        'сервисный сбор — это плата за место, инвентарь и работу администратора, ' +
+        'призового фонда нет. Чтобы играть, нужно согласиться с офертой и правилами ' +
+        'и дать согласие на обработку данных. Документ, удостоверяющий личность, ' +
+        'покажете администратору на входе — в приложении он не нужен.</div>') +
+    (d.need_fio
+      ? '<div class="up-card" style="padding:14px;margin-bottom:12px">' +
+          '<div class="up-field"><label class="up-label">Фамилия и имя</label>' +
+            '<input class="up-input" id="dcFio" type="text" value="' + esc(d.fio || '') + '" ' +
+            'placeholder="Как в документе"></div>' +
+          '<div class="up-field" style="margin-top:12px"><label class="up-label">Дата рождения</label>' +
+            '<input class="up-input" id="dcBorn" type="date" value="' + esc(d.born || '') + '"></div>' +
+          '<div class="up-row__sub" style="margin-top:9px">Это нужно для согласия ' +
+            'на обработку данных: под документом должно стоять настоящее имя, а не ник. ' +
+            'Ник в клубе остаётся прежним.</div>' +
+        '</div>'
+      : '') +
+    docs.map(x =>
+      '<div class="doc">' +
+        '<div class="doc__h">' + esc(x.title) + '</div>' +
+        '<div class="doc__v">Редакция ' + esc(x.version) +
+          (x.subtitle ? ' · ' + esc(x.subtitle) : '') + '</div>' +
+        '<div class="doc__body" id="db-' + x.code + '">' +
+          docHtml(fillDoc(x.body, { fio: d.fio, born: d.born, phone: d.phone })) + '</div>' +
+        '<button class="doc__more" data-more="' + x.code + '">Читать целиком</button>' +
+        (x.signed
+          ? '<div class="doc__ok">&#10003; Подписано ' + esc(dateRu(x.signed_at)) + '</div>'
+          : '<label class="chk"><input type="checkbox" data-doc="' + x.code + '"><i></i>' +
+            '<span>' + esc(x.check) + '</span></label>')
+      + '</div>').join('') +
+    (allSigned ? ''
+      : '<button class="up-btn up-btn--gold up-btn--block" id="dcGo" disabled>' +
+        'Подписать и продолжить</button>') +
+    '<div class="up-row__sub" id="dcHint" style="margin:10px 0 20px;text-align:center"></div>';
+
+  const hint = t => { const h = $('dcHint'); if (h) h.textContent = t || ''; };
+  const back = $('dcBack');
+  if (back) back.onclick = () => shellBack();
+
+  document.querySelectorAll('[data-more]').forEach(b => {
+    b.onclick = () => {
+      const box = $('db-' + b.dataset.more);
+      const open = box.classList.toggle('open');
+      b.textContent = open ? 'Свернуть' : 'Читать целиком';
+    };
+  });
+
+  // пока человек печатает ФИО и дату, они подставляются в текст согласия
+  const live = () => {
+    const vals = { fio: ($('dcFio') ? $('dcFio').value.trim() : d.fio),
+                   born: ($('dcBorn') ? $('dcBorn').value : d.born),
+                   phone: d.phone };
+    docs.forEach(x => {
+      if (!x.needs_fio) return;
+      const box = $('db-' + x.code);
+      if (box) box.innerHTML = docHtml(fillDoc(x.body, vals));
+    });
+  };
+  ['dcFio', 'dcBorn'].forEach(id => { if ($(id)) $(id).oninput = live; });
+
+  const boxes = Array.prototype.slice.call(document.querySelectorAll('[data-doc]'));
+  const btn = $('dcGo');
+  const check = () => { if (btn) btn.disabled = !boxes.every(b => b.checked); };
+  boxes.forEach(b => { b.onchange = check; });
+  check();
+
+  if (btn) btn.onclick = async () => {
+    const accept = boxes.filter(b => b.checked).map(b => b.dataset.doc);
+    const fio = $('dcFio') ? ($('dcFio').value || '').trim() : '';
+    const born = $('dcBorn') ? ($('dcBorn').value || '').trim() : '';
+    if (d.need_fio) {
+      if (fio.split(/\s+/).filter(Boolean).length < 2) {
+        hint('Впишите фамилию и имя'); return;
+      }
+      if (!born) { hint('Укажите дату рождения'); return; }
+    }
+    btn.disabled = true; hint('Отправляю...');
+    try {
+      const res = await apiPost('/consent', { accept: accept, fio: fio, born: born }, 15000);
+      if (res.ok) { hint('Готово! Открываю клуб...'); haptic('success'); setTimeout(restart, 500); }
+      else { hint(res.message || 'Не получилось'); btn.disabled = false; }
+    } catch (e) {
+      hint('Нет связи с сервером. Нажмите ещё раз');
+      btn.disabled = false;
+    }
+  };
+  window.scrollTo({ top: 0 });
+}
+
 /* ---------- навигация ---------- */
 function go(name){
   document.querySelectorAll('.screen').forEach(s => s.classList.toggle('screen--on', s.id === 'sc-' + name));
@@ -1086,6 +1341,7 @@ async function onRegister(id){
   }
 
   const res = await apiPost('/register', { tid: t.id, action: (t.registered || t.wait) ? 'cancel' : 'register' });
+  if (res.need_docs) { toast(res.message || 'Сначала подпишите документы клуба'); showDocs(); return; }
   toast(res.message || res.error || 'Не получилось');
   haptic(res.ok ? 'success' : 'error');
   DATA = await loadData();
@@ -1129,6 +1385,10 @@ async function start(){
 
   if (OFFLINE) { showOffline(); return; }
 
+  // Документы не подписаны — показываем их сразу. Уйти можно кнопкой «Позже»,
+  // но записаться на турнир без подписи не получится.
+  if (!DEMO && DATA.docs && (DATA.docs.pending || []).length) { startPolling(); showDocs(); return; }
+
   if (DEMO) {
     const d = document.createElement('div');
     d.id = 'demoBadge';
@@ -1137,13 +1397,24 @@ async function start(){
     d.textContent = 'Пример данных · ' + (DEMO_REASON || 'откройте из бота');
     document.body.appendChild(d);
   } else {
-    // пока приложение открыто, тихо обновляем данные
-    setInterval(async () => {
-      try { const fresh = await loadData(); if (fresh && fresh.me) { DATA = fresh; renderAll(); } }
-      catch (e) { console.error(e); }
-    }, 20000);
+    startPolling();
   }
   } catch (e) { showError(e); }
+}
+
+// пока приложение открыто, тихо обновляем данные
+let POLL = null;
+function startPolling(){
+  if (POLL) return;
+  POLL = setInterval(async () => {
+    try {
+      const fresh = await loadData();
+      if (!fresh || !fresh.me) return;
+      DATA = fresh;
+      // на экране документов или регистрации рисовать нечего — там своя разметка
+      if ($('heroCard')) renderAll();
+    } catch (e) { console.error(e); }
+  }, 20000);
 }
 
 // Рисуем как можно раньше: ждём скрипт Telegram, но не дольше секунды.

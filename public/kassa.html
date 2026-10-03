@@ -64,6 +64,10 @@
              background:rgba(212,175,90,.14);color:var(--up-gold-text);}
   .noseat{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
           background:var(--up-warn-bg,rgba(230,180,80,.15));color:var(--up-warn);}
+  .nodocs{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
+          background:var(--up-bad-bg,rgba(224,104,122,.15));color:var(--up-bad);}
+  .idok{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
+        background:var(--up-ok-bg,rgba(120,200,140,.14));color:var(--up-ok);}
 
   /* ---------- карта столов ---------- */
   .tb{background:var(--up-surface);border:1.5px solid var(--up-line);border-radius:18px;
@@ -396,11 +400,13 @@ function renderList(){
     noseat:  all.filter(p => kind(p) === 'play' && !seatOf[p.id]),
     nostack: all.filter(p => kind(p) === 'nostack'),
     unpaid:  all.filter(p => kind(p) === 'unpaid' || kind(p) === 'wait'),
-    out:     all.filter(p => kind(p) === 'out')
+    out:     all.filter(p => kind(p) === 'out'),
+    nodocs:  all.filter(p => !p.docs)
   };
   const tabs = [
     ['all','Все'], ['play','За столами'], ['noseat','Без места'],
-    ['nostack','Без стека'], ['unpaid','Не оплатили'], ['out','Выбыли']
+    ['nostack','Без стека'], ['unpaid','Не оплатили'], ['out','Выбыли'],
+    ['nodocs','Без документов']
   ].filter(([k]) => k === 'all' || groups[k].length);
   if (!groups[FILTER] || !groups[FILTER].length) FILTER = 'all';
   $('filters').innerHTML = tabs.map(([k,label]) =>
@@ -432,6 +438,8 @@ function renderList(){
     }
     if (p.reentry) bits.push('ребай ×' + p.reentry);
     if (p.addon)   bits.push('аддон ×' + p.addon);
+    if (!p.docs)   bits.push('<span class="nodocs">нет документов</span>');
+    else if (p.id_ok) bits.push('<span class="idok">паспорт ✓</span>');
 
     // одно главное действие — крупное, остальное в «···»
     let act = '';
@@ -586,6 +594,8 @@ async function playerMenu(id){
   if (k === 'play') items.push({ id:'seat', label:'Посадить или пересадить', cls:'up-btn--gold mi' });
   if (p.busted) items.push({ id:'unbust', label:'Вернуть в игру — отметили по ошибке', cls:'up-btn--gold mi' });
   if (k === 'play') items.push({ id:'bust', label:'Отметить выбывание', cls:'mi' });
+  items.push({ id:'idok', label: p.id_ok ? 'Снять отметку о документе' : 'Документ проверен, 18+',
+               cls:'mi' });
   items.push({ id:'help', label:'Что значат эти кнопки', cls:'mi' });
   items.push({ id:'remove', label:'Стереть запись — ошибка кассира', cls:'mi danger' });
 
@@ -593,7 +603,10 @@ async function playerMenu(id){
             : k === 'nostack' ? 'нет стека, может взять ребай'
             : k === 'play' ? 'за столом'
             : 'вход не оплачен';
-  const act = await menu(p.name, '№ ' + p.number + ' · ' + sub, items);
+  const docs = p.docs
+    ? (p.fio ? ' · ' + p.fio : '') + (p.id_ok ? ' · документ проверен ' + p.id_ok : '')
+    : ' · ДОКУМЕНТЫ НЕ ПОДПИСАНЫ';
+  const act = await menu(p.name, '№ ' + p.number + ' · ' + sub + docs, items);
 
   if (act === 'seat'){ VIEW = 'seats'; PICK = id; switchView(); toast('Нажмите место, куда посадить'); return; }
   if (act === 'bust'){
@@ -602,6 +615,10 @@ async function playerMenu(id){
   }
   if (act === 'unbust'){
     const r = await post('/unbust', { player_id: id });
+    toast(r.message || 'Готово'); refresh(true); return;
+  }
+  if (act === 'idok'){
+    const r = await post('/id-check', { player_id: id });
     toast(r.message || 'Готово'); refresh(true); return;
   }
   if (act === 'help'){ helpSheet(); return; }
@@ -682,6 +699,18 @@ const HELP = `
 <p><b>Сотрудники уступают места сами.</b> Как только за столом набирается шесть
 живых игроков, добор снимается — касса напишет об этом в ответе на «Вход».
 Снимать руками не нужно. Когда соберётся финальный стол, доборы тоже встанут.</p>
+
+<h3>Документы игрока</h3>
+<p>Перед первым турниром игрок подписывает в приложении оферту, правила клуба
+и согласие на обработку данных. Кто не подписал — не может записаться на турнир,
+и в кассе у него красная метка <b>нет документов</b>. Таких видно одним нажатием:
+фильтр <b>Без документов</b>.</p>
+<p>Человек с красной меткой может прийти и заплатить — касса его пропустит.
+Но попросите его открыть приложение и подписать: это минута, а без подписи у
+клуба нет согласия на обработку его данных.</p>
+<p>Документ, удостоверяющий личность, смотрите на входе сами — приложение его
+не хранит. Посмотрели: <b>···</b> → <b>Документ проверен, 18+</b>. В карточке
+появится зелёная метка <b>паспорт ✓</b>, и в следующий раз спрашивать не нужно.</p>
 
 <h3>Если ошиблись</h3>
 <p>Отметили выбывание зря — <b>···</b> у игрока, затем <b>Вернуть в игру</b>.</p>
