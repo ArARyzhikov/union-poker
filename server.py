@@ -352,6 +352,9 @@ def init_db():
     # Мягкие миграции: добавляем недостающие колонки в уже существующие базы,
     # чтобы обновление сервера не требовало удалять club.db
     add_column("entries", "wait", "INTEGER DEFAULT 0")
+    # Управляющий, которого посадили добить стол. Сидит и играет, но в счёт
+    # не идёт: ни в рейтинг, ни в места, ни в сбор финального стола.
+    add_column("entries", "house", "INTEGER DEFAULT 0")
     add_column("entries", "table_no", "INTEGER DEFAULT 0")
     add_column("entries", "seat_no", "INTEGER DEFAULT 0")
     for col, decl in (("start", "TEXT"), ("time", "TEXT"), ("weekday", "TEXT"),
@@ -629,7 +632,9 @@ def check_final(admin=None):
     if alive_count(row["id"]) > final_at():
         return False
     x("UPDATE tournaments SET stage='final' WHERE id=?", (row["id"],))
-    rebalance(admin)
+    # доборы встают из-за стола: финал играют только участники
+    x("DELETE FROM entries WHERE tid=? AND COALESCE(house,0)=1", (row["id"],))
+    rebalance(admin)   # финальный стол — всегда один, даже при ручной рассадке
     log("сервер", f"турнир #{row['id']}: собран финальный стол")
     notify_players(row["id"], "Собран финальный стол. Удачи!")
     return True
@@ -653,7 +658,7 @@ def final_table():
         return []
     rows = q("""SELECT p.name, p.username, p.number, e.seat_no FROM entries e
                 JOIN players p ON p.id = e.player_id
-                WHERE e.tid=? AND e.arrived=1 AND e.busted=0
+                WHERE e.tid=? AND e.arrived=1 AND e.busted=0 AND COALESCE(e.house,0)=0
                 ORDER BY e.seat_no""", (row["id"],))
     by_seat = {r["seat_no"]: r for r in rows if r["seat_no"]}
     out = []
@@ -693,7 +698,10 @@ def set_stage(stage, admin=None):
                        "Ребай-период закончен. Перерыв — аддон "
                        f"{price} ₽, один раз каждому. Дальше финальная стадия.")
     if stage == "play":
-        rebalance(admin)
+        # В ручном режиме рассадка ваша — не трогаем. В автоматическом
+        # собираем столы поровну: новых входов дальше не будет.
+        if auto_seat_on():
+            rebalance(admin)
         notify_players(row["id"], "Аддон-тайм закончен, покупок больше нет. "
                                   f"Финальный стол соберётся при {final_at()} игроках.")
         if check_final(admin):
@@ -810,7 +818,9 @@ def taken(t_id=None):
 
 
 def alive_count(t_id=None):
-    return q("SELECT COUNT(*) AS c FROM entries WHERE tid=? AND arrived=1 AND busted=0",
+    """Сколько игроков в игре. Управляющие на доборе не считаются."""
+    return q("""SELECT COUNT(*) AS c FROM entries
+                WHERE tid=? AND arrived=1 AND busted=0 AND COALESCE(house,0)=0""",
              (t_id or tid(),), one=True)["c"]
 
 
@@ -903,6 +913,9 @@ def per_table():
     return max(2, min(10, int(CFG.get("seats_per_table", 9))))
 
 
+MIN_TABLE = 6      # меньше шести за столом — игра не идёт, нужен добор
+
+
 def tables_needed(n):
     """Сколько столов нужно на n человек: минимум, но не больше, чем есть в клубе."""
     per, tc = per_table(), tables_count()
@@ -910,50 +923,74 @@ def tables_needed(n):
 
 
 def free_seat(t_id):
-    """Куда посадить пришедшего.
+    """Куда посадить пришедшего: первое свободное место по порядку столов.
 
-    Столы открываются по мере надобности: пока хватает одного, все сидят за
-    ним. Это важно — четыре стола по три человека игрой не считаются.
-    Среди уже открытых выбираем тот, где меньше народу.
+    Столы заполняются один за другим, а не поровну. Так недобор бывает только
+    за тем столом, который сейчас набирается, и сотрудников приходится сажать
+    в одно место, а не за три стола сразу.
     """
-    per = per_table()
+    per, tc = per_table(), tables_count()
     used = {}
     for r in q("""SELECT table_no, seat_no FROM entries
                   WHERE tid=? AND arrived=1 AND busted=0 AND table_no>0""", (t_id,)):
         used.setdefault(r["table_no"], set()).add(r["seat_no"])
-    alive = sum(len(v) for v in used.values())
-    need = tables_needed(alive + 1)
-    best, best_n = 0, None
-    for t in range(1, need + 1):
-        n = len(used.get(t, ()))
-        if n >= per:
+    for t in range(1, tc + 1):
+        busy = used.get(t, set())
+        if len(busy) >= per:
             continue
-        if best_n is None or n < best_n:
-            best, best_n = t, n
-    if not best:
-        return 0, 0
-    busy = used.get(best, set())
-    for seat in range(1, per + 1):
-        if seat not in busy:
-            return best, seat
-    return best, 0
+        for seat in range(1, per + 1):
+            if seat not in busy:
+                return t, seat
+    return 0, 0
 
 
-def seat_player(entry_id, t_id):
-    """Сажает игрока. Если из-за него открывается новый стол — разводит поровну."""
-    before = len({r["table_no"] for r in q(
-        """SELECT DISTINCT table_no FROM entries
-           WHERE tid=? AND arrived=1 AND busted=0 AND table_no>0""", (t_id,))})
+def house_at(t_id, table=None):
+    """Сотрудники на доборе: за каким столом и на каком месте сидят."""
+    sql = """SELECT e.id, e.player_id, e.table_no, e.seat_no FROM entries e
+             WHERE e.tid=? AND e.arrived=1 AND e.busted=0 AND COALESCE(e.house,0)=1
+             AND e.table_no>0"""
+    args = [t_id]
+    if table:
+        sql += " AND e.table_no=?"
+        args.append(table)
+    return q(sql + " ORDER BY e.table_no, e.seat_no DESC", tuple(args))
+
+
+def real_at(t_id, table):
+    return q("""SELECT COUNT(*) AS c FROM entries WHERE tid=? AND arrived=1 AND busted=0
+                AND COALESCE(house,0)=0 AND table_no=?""", (t_id, table), one=True)["c"]
+
+
+def free_house_seats(t_id, table, admin=None):
+    """Сотрудники встают, как только за столом хватает живых игроков."""
+    freed = []
+    for h in house_at(t_id, table):
+        if real_at(t_id, table) < MIN_TABLE:
+            break
+        nm = q("SELECT name FROM players WHERE id=?", (h["player_id"],), one=True)
+        x("DELETE FROM entries WHERE id=?", (h["id"],))
+        freed.append(nm["name"] if nm else "управляющий")
+        log(admin, f"добор снят: {freed[-1]} со стола {table}")
+    return freed
+
+
+def seat_player(entry_id, t_id, admin=None):
+    """Сажает пришедшего на первое свободное место. Живых игроков не двигает.
+
+    Если мест нет только потому, что за столами сидят сотрудники на доборе,
+    один из них встаёт и отдаёт место клиенту.
+    """
     t, s = free_seat(t_id)
+    if not t:
+        h = house_at(t_id)
+        if h:
+            nm = q("SELECT name FROM players WHERE id=?", (h[0]["player_id"],), one=True)
+            t, s = h[0]["table_no"], h[0]["seat_no"]
+            x("DELETE FROM entries WHERE id=?", (h[0]["id"],))
+            log(admin, f"добор снят: {nm['name'] if nm else 'управляющий'} отдал место")
+    if not t:
+        return 0, 0
     x("UPDATE entries SET table_no=?, seat_no=? WHERE id=?", (t, s, entry_id))
-    after = len({r["table_no"] for r in q(
-        """SELECT DISTINCT table_no FROM entries
-           WHERE tid=? AND arrived=1 AND busted=0 AND table_no>0""", (t_id,))})
-    if after > before > 0:
-        rebalance("сервер")
-        e = q("SELECT table_no, seat_no FROM entries WHERE id=?", (entry_id,), one=True)
-        if e:
-            return e["table_no"], e["seat_no"]
     return t, s
 
 
@@ -1010,10 +1047,52 @@ def seat_free(player_id, admin=None):
     return True, "Игрок без места"
 
 
+def house_add(name, table, seat, admin=None):
+    """Сажает управляющего, чтобы стол играл. В турнире он не участвует."""
+    name = (name or "").strip() or "Управляющий"
+    t_id = tid()
+    row = t_row(t_id)
+    if not row or row["status"] == "finished":
+        return False, "Турнир завершён"
+    p = q("SELECT * FROM players WHERE lower(name)=lower(?)", (name,), one=True)
+    pid = p["id"] if p else x("INSERT INTO players(name, number) VALUES(?,?)",
+                              (name, next_number()))
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (t_id, pid), one=True)
+    if e and not e["house"]:
+        return False, f"{name} уже играет в этом турнире"
+    if not e:
+        x("INSERT INTO entries(tid, player_id, arrived, house) VALUES(?,?,1,1)", (t_id, pid))
+    else:
+        x("UPDATE entries SET arrived=1, busted=0, house=1 WHERE id=?", (e["id"],))
+    ok, msg = seat_set(pid, table, seat, admin)
+    if not ok:
+        return False, msg
+    log(admin, f"добор: {name} за стол {table}, место {seat}")
+    return True, f"{name} сел добить стол {table}"
+
+
+def house_remove(player_id, admin=None):
+    """Убирает управляющего со стола. Денег за ним нет, поэтому просто стираем."""
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
+    if not e:
+        return False, "Его нет за столом"
+    if not e["house"]:
+        return False, "Это обычный игрок, а не добор"
+    x("DELETE FROM entries WHERE id=?", (e["id"],))
+    log(admin, f"добор снят: игрок {player_id}")
+    return True, "Управляющий встал из-за стола"
+
+
+def house_names():
+    return {r["player_id"] for r in q(
+        "SELECT player_id FROM entries WHERE tid=? AND COALESCE(house,0)=1", (tid(),))}
+
+
 def seat_map():
     """Полная карта столов: каждое место с игроком или пустое."""
     per, tc = per_table(), tables_count()
-    rows = q("""SELECT p.id, p.name, p.number, e.table_no, e.seat_no FROM entries e
+    rows = q("""SELECT p.id, p.name, p.number, e.table_no, e.seat_no,
+                       COALESCE(e.house,0) AS house FROM entries e
                 JOIN players p ON p.id=e.player_id
                 WHERE e.tid=? AND e.arrived=1 AND e.busted=0""", (tid(),))
     at = {(r["table_no"], r["seat_no"]): r for r in rows if r["table_no"]}
@@ -1023,12 +1102,15 @@ def seat_map():
         for s_ in range(1, per + 1):
             r = at.get((t, s_))
             seats.append({"seat": s_, "player_id": r["id"] if r else 0,
-                          "name": r["name"] if r else "", "number": r["number"] if r else 0})
-        out.append({"table": t, "seats": seats,
-                    "taken": sum(1 for x_ in seats if x_["player_id"])})
-    return {"tables": out, "per": per,
+                          "name": r["name"] if r else "", "number": r["number"] if r else 0,
+                          "house": bool(r["house"]) if r else False})
+        taken = sum(1 for x_ in seats if x_["player_id"])
+        out.append({"table": t, "seats": seats, "taken": taken,
+                    "players": sum(1 for x_ in seats if x_["player_id"] and not x_["house"]),
+                    "small": 0 < taken < MIN_TABLE})
+    return {"tables": out, "per": per, "min_table": MIN_TABLE,
             "noseat": [{"player_id": r["id"], "name": r["name"], "number": r["number"]}
-                       for r in rows if not r["table_no"]],
+                       for r in rows if not r["table_no"] and not r["house"]],
             "auto": auto_seat_on()}
 
 
@@ -1040,7 +1122,7 @@ def rebalance(admin=None):
     """Пересобирает столы: игроков поровну на минимально нужное число столов."""
     per = per_table()
     rows = q("""SELECT id FROM entries WHERE tid=? AND arrived=1 AND busted=0
-                ORDER BY table_no, seat_no""", (tid(),))
+                AND COALESCE(house,0)=0 ORDER BY table_no, seat_no""", (tid(),))
     ids = [r["id"] for r in rows]
     if not ids:
         return 0, 0
@@ -1094,8 +1176,12 @@ def purchase(player_id, kind, admin=None):
             return False, "Вход уже оплачен"
         x("UPDATE entries SET arrived=1, busted=0, place=0, wait=0 WHERE id=?", (e["id"],))
         if auto_seat_on():
-            tb, st = seat_player(e["id"], row["id"])
+            tb, st = seat_player(e["id"], row["id"], admin)
             seat_msg = f" · стол {tb}, место {st}" if tb else " · свободных мест нет"
+            if tb:
+                gone = free_house_seats(row["id"], tb, admin)
+                if gone:
+                    seat_msg += " · " + ", ".join(gone) + (" встал" if len(gone) == 1 else " встали")
         else:
             seat_msg = " · посадите за стол"
     elif kind == "reentry":
@@ -1105,8 +1191,12 @@ def purchase(player_id, kind, admin=None):
             return False, "Игрок ещё в игре — ребай берут, когда кончился стек"
         x("UPDATE entries SET busted=0, place=0 WHERE id=?", (e["id"],))
         if auto_seat_on():
-            tb, st = seat_player(e["id"], row["id"])
+            tb, st = seat_player(e["id"], row["id"], admin)
             seat_msg = f" · стол {tb}, место {st}" if tb else " · свободных мест нет"
+            if tb:
+                gone = free_house_seats(row["id"], tb, admin)
+                if gone:
+                    seat_msg += " · " + ", ".join(gone) + (" встал" if len(gone) == 1 else " встали")
         else:
             seat_msg = " · посадите за стол"
     elif kind == "addon":
@@ -1140,17 +1230,8 @@ def bust(player_id, admin=None):
     msg = f"{place} место"
     if check_final(admin):
         return True, msg + " · собран финальный стол"
-    # После перерыва новых входов нет, поэтому лишние столы закрываем сами:
-    # стол на одного-двух человек — это не игра. В ребай-период не трогаем,
-    # там народ ещё приходит и возвращается.
-    if stage_of(t_row(tid())) == "play" and auto_seat_on():
-        in_use = len({r["table_no"] for r in q(
-            """SELECT DISTINCT table_no FROM entries
-               WHERE tid=? AND arrived=1 AND busted=0 AND table_no>0""", (tid(),))})
-        need = tables_needed(alive_count())
-        if in_use > need:
-            n, tabs = rebalance(admin)
-            msg += f" · столы собраны: {tabs} вместо {in_use}"
+    # Столы сами не пересобираем: рассадка остаётся той, что сделали вы.
+    # Если стол стал маленьким — касса подскажет, а собирать вам.
     return True, msg
 
 
@@ -1240,19 +1321,21 @@ def finish_tournament(admin=None):
     """Закрывает турнир и начисляет очки рейтинга."""
     if t_status() == "finished":
         return False, "Турнир уже завершён"
-    rest = q("SELECT * FROM entries WHERE tid=? AND arrived=1 AND busted=0", (tid(),))
+    rest = q("""SELECT * FROM entries WHERE tid=? AND arrived=1 AND busted=0
+                AND COALESCE(house,0)=0""", (tid(),))
     if len(rest) > 1:
         return False, (f"В игре ещё {len(rest)} {plural(len(rest), 'игрок', 'игрока', 'игроков')}. "
                        "Отметьте выбывших — тот, кто останется последним, получит первое место")
     if len(rest) == 1:
         x("UPDATE entries SET busted=1, place=1 WHERE id=?", (rest[0]["id"],))
     pts = CFG["points"]
-    for e in q("SELECT * FROM entries WHERE tid=? AND arrived=1", (tid(),)):
+    for e in q("SELECT * FROM entries WHERE tid=? AND arrived=1 AND COALESCE(house,0)=0",
+               (tid(),)):
         place = e["place"] or 0
         p = pts[place - 1] if 0 < place <= len(pts) else CFG["points_rest"]
         x("UPDATE entries SET points=? WHERE id=?", (p, e["id"]))
     # записался и не пришёл — незачем хранить в сыгранном турнире
-    x("DELETE FROM entries WHERE tid=? AND arrived=0", (tid(),))
+    x("DELETE FROM entries WHERE tid=? AND (arrived=0 OR COALESCE(house,0)=1)", (tid(),))
     x("UPDATE tournaments SET status='finished' WHERE id=?", (tid(),))
     log(admin, f"турнир #{tid()} завершён, очки начислены")
     setting("pin_tid", "")        # касса сама перейдёт к следующему турниру афиши
@@ -1842,7 +1925,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self.admin_ok():
                 return self.json_out({"error": "Нет доступа"}, 403)
             rows = q("""SELECT p.id, p.name, p.number, e.arrived, e.busted, e.place,
-                               e.wait, e.table_no, e.seat_no,
+                               e.wait, e.table_no, e.seat_no, COALESCE(e.house,0) AS house,
                                (SELECT COUNT(*) FROM purchases s
                                  WHERE s.tid=e.tid AND s.player_id=p.id AND s.kind='reentry') AS reentry,
                                (SELECT COUNT(*) FROM purchases s
@@ -1976,6 +2059,15 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/admin/seat-free":
                 ok, msg = seat_free(body.get("player_id"), "admin")
+                return self.json_out({"ok": ok, "message": msg, "seatmap": seat_map()})
+
+            if path == "/api/admin/house-add":
+                ok, msg = house_add(body.get("name"), body.get("table"),
+                                    body.get("seat"), "admin")
+                return self.json_out({"ok": ok, "message": msg, "seatmap": seat_map()})
+
+            if path == "/api/admin/house-remove":
+                ok, msg = house_remove(body.get("player_id"), "admin")
                 return self.json_out({"ok": ok, "message": msg, "seatmap": seat_map()})
 
             if path == "/api/admin/seat-mode":

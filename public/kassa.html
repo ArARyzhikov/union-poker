@@ -77,10 +77,16 @@
         display:flex;flex-direction:column;justify-content:center;cursor:pointer;}
   .seat i{font-style:normal;display:block;font:700 9.5px var(--up-font-ui);color:var(--up-muted);
           letter-spacing:.1em;margin-bottom:3px;}
-  .seat b{font-size:12.5px;font-weight:800;line-height:1.2;word-break:break-word;}
+  .seat b{font-size:12.5px;font-weight:800;line-height:1.2;overflow-wrap:break-word;}
+  .seat b.sm{font-size:11px;letter-spacing:-.2px;}
   .seat.free{border-style:dashed;opacity:.55;}
   .seat.free b{font-weight:600;color:var(--up-muted);}
   .seat.pick{border-color:var(--up-gold-2);background:rgba(212,175,90,.14);}
+  .seat.house{border-style:dashed;border-color:rgba(212,175,90,.5);background:rgba(212,175,90,.07);}
+  .seat.house i{color:var(--up-gold-dim);}
+  .warn{background:var(--up-bad-bg);border:1px solid rgba(224,104,122,.35);color:var(--up-bad);
+        border-radius:12px;padding:8px 11px;font-size:12.5px;font-weight:700;
+        line-height:1.4;margin-bottom:9px;}
 
   /* ---------- общее ---------- */
   .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(10,9,7,.96);
@@ -378,7 +384,7 @@ function render(){
 
 function renderList(){
   const t = STATE.tournament, st = t.stage || 'rebuy';
-  const all = STATE.players || [];
+  const all = (STATE.players || []).filter(p => !p.house);
   const sm = STATE.seatmap || {tables:[], noseat:[]};
   const seatOf = {};
   (sm.tables||[]).forEach(tb => tb.seats.forEach(s => { if (s.player_id) seatOf[s.player_id] = tb.table + '/' + s.seat; }));
@@ -479,18 +485,42 @@ function renderSeats(){
         esc(p.name) + '</b></div>').join('') + '</div></div>'
     : '';
 
+  const minT = sm.min_table || 6;
   $('seatMap').innerHTML = waitHtml + (sm.tables||[]).map(tb =>
     '<div class="tb"><div class="tb__h"><b>Стол ' + tb.table + '</b>' +
-      '<span>' + tb.taken + ' из ' + sm.per + '</span></div>' +
+      '<span>' + tb.taken + ' из ' + sm.per +
+      (tb.players !== tb.taken ? ' · игроков ' + tb.players : '') + '</span></div>' +
+    (tb.small ? '<div class="warn">За столом меньше ' + minT +
+       '. Посадите управляющего на добор — нажмите свободное место.</div>' : '') +
     '<div class="seats">' + tb.seats.map(s =>
-      '<div class="seat' + (s.player_id ? '' : ' free') + '" ' +
-        'data-seat="' + tb.table + ':' + s.seat + '" data-pid="' + s.player_id + '">' +
-        '<i>МЕСТО ' + s.seat + '</i><b>' + (s.player_id ? esc(s.name) : 'свободно') + '</b></div>'
-      ).join('') + '</div></div>').join('');
+      '<div class="seat' + (s.player_id ? (s.house ? ' house' : '') : ' free') + '" ' +
+        'data-seat="' + tb.table + ':' + s.seat + '" data-pid="' + s.player_id + '" ' +
+        'data-house="' + (s.house ? 1 : 0) + '">' +
+        '<i>' + (s.house ? 'ДОБОР' : 'МЕСТО ' + s.seat) + '</i>' +
+        '<b class="' + ((s.name || '').length > 10 ? 'sm' : '') + '">' +
+        (s.player_id ? esc(s.name) : 'свободно') + '</b></div>'
+      ).join('') + '</div></div>').join('') +
+    '<button class="up-btn up-btn--block" data-collapse="1" style="margin-top:4px">' +
+    'Собрать столы поровну</button>';
 }
 
-async function seatTap(table, seat, pid){
+async function seatTap(table, seat, pid, house){
   const sm = STATE.seatmap || {};
+  if (pid && house) {
+    const p = (STATE.players || []).find(x => x.id === pid);
+    const act = await menu(p ? p.name : 'Управляющий',
+      'Сидит на доборе, стол ' + table + ', место ' + seat +
+      '. В турнире не участвует: ни очков, ни места.', [
+      { id:'move', label:'Пересадить на другое место', cls:'up-btn--gold mi' },
+      { id:'off',  label:'Встать из-за стола', cls:'mi danger' }
+    ]);
+    if (act === 'move') { PICK = pid; toast('Теперь нажмите, куда пересадить'); return; }
+    if (act === 'off') {
+      const r = await post('/house-remove', { player_id: pid });
+      toast(r.message || 'Готово'); refresh(true);
+    }
+    return;
+  }
   if (pid) {
     const p = (STATE.players || []).find(x => x.id === pid);
     const act = await menu(p ? p.name : 'Игрок', 'Стол ' + table + ', место ' + seat, [
@@ -520,9 +550,17 @@ async function seatTap(table, seat, pid){
     !free.some(f => f.player_id === p.id));
   const items = free.map(p => ({ id:'p' + p.player_id, label:p.name + ' · ждёт места', cls:'up-btn--gold mi' }))
     .concat(seated.map(p => ({ id:'p' + p.id, label:p.name + ' · пересадить сюда', cls:'mi' })));
-  if (!items.length) { toast('Сажать некого — все уже за столами'); return; }
+  items.push({ id:'house', label:'Посадить управляющего на добор', cls:'mi' });
   const act = await menu('Стол ' + table + ', место ' + seat, 'Кого посадить сюда?', items);
   if (!act) return;
+  if (act === 'house') {
+    const nm = await ask('Управляющий на добор',
+      'Он сядет играть, чтобы стол не простаивал. В турнире не участвует: ' +
+      'ни очков, ни места, ни в подсчёте игроков.', 'Управляющий');
+    if (!nm) return;
+    const r = await post('/house-add', { name: nm, table, seat });
+    toast(r.message || 'Готово'); refresh(true); return;
+  }
   const r = await post('/seat-set', { player_id: +act.slice(1), table, seat });
   toast(r.message || 'Готово'); refresh(true);
 }
@@ -621,9 +659,29 @@ const HELP = `
 
 <h3>Столы</h3>
 <p>Кнопка <b>Столы</b> внизу — карта всех мест. Нажмите на место, чтобы
-посадить, пересадить или поднять игрока. Если компания хочет сидеть вместе,
-переключите рассадку на ручную: тогда касса не будет сажать сама, и вы
-расставите людей как нужно.</p>
+посадить, пересадить или поднять игрока.</p>
+<p><b>Столы заполняются по очереди.</b> Первый набирается до девяти, десятый
+пришедший открывает второй, и так далее. Поровну касса не делит специально:
+иначе один живой стол превращается в два полупустых, и сотрудников пришлось бы
+сажать сразу за оба.</p>
+<p><b>Рассадка не меняется сама.</b> Кого посадили, тот там и сидит: ни вылеты,
+ни переход к финалу её не трогают. Пересобрать столы можно только кнопкой
+<b>Собрать столы поровну</b> внизу карты — и один раз это произойдёт
+автоматически, когда соберётся финальный стол.</p>
+<p>Если компания хочет сидеть вместе, переключите рассадку на ручную: тогда
+касса не сажает сама, пришедшие ждут в блоке «Ждут места», и вы расставляете
+людей как нужно.</p>
+
+<h3>Добор: управляющий за столом</h3>
+<p>Стол играет от шести человек. Если людей меньше, касса подсветит стол
+красным. Нажмите свободное место и выберите <b>Посадить управляющего на
+добор</b> — он сядет играть, чтобы стол не простаивал.</p>
+<p>Управляющий на доборе <b>не участвует в турнире</b>: не считается в «в игре»,
+не влияет на сбор финального стола, не получает места и очков, не попадает в
+рейтинг. На карте его место отмечено пунктиром и словом «ДОБОР».</p>
+<p><b>Сотрудники уступают места сами.</b> Как только за столом набирается шесть
+живых игроков, добор снимается — касса напишет об этом в ответе на «Вход».
+Снимать руками не нужно. Когда соберётся финальный стол, доборы тоже встанут.</p>
 
 <h3>Если ошиблись</h3>
 <p>Отметили выбывание зря — <b>···</b> у игрока, затем <b>Вернуть в игру</b>.</p>
@@ -663,10 +721,20 @@ document.addEventListener('click', async e => {
     toast(r.message || 'Готово'); refresh(true); return;
   }
 
+  const col = e.target.closest('[data-collapse]');
+  if (col) {
+    if (!await confirmDo('Собрать столы поровну?',
+      'Все, кто в игре, рассядутся заново на минимально нужное число столов. ' +
+      'Доборы встанут. Делайте это между раздачами и объявите новые места.',
+      'Собрать')) { toast('Отменено'); return; }
+    const r = await post('/rebalance', {});
+    toast(r.message || 'Готово'); refresh(true); return;
+  }
+
   const sseat = e.target.closest('[data-seat]');
   if (sseat) {
     const [tb, s] = sseat.dataset.seat.split(':').map(Number);
-    await seatTap(tb, s, +sseat.dataset.pid || 0); return;
+    await seatTap(tb, s, +sseat.dataset.pid || 0, sseat.dataset.house === '1'); return;
   }
 
   const ns = e.target.closest('[data-noseat]');
