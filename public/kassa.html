@@ -4,52 +4,106 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Union Poker — касса турнира</title>
-<!-- Шрифты клуба. Грузятся фоном: если Google недоступен, приложение всё равно работает. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Forum&family=Manrope:wght@500;600;700;800&display=swap"
       media="print" onload="this.media='all'">
 <link rel="stylesheet" href="union-poker-ui.css">
 <style>
   html,body{background:var(--up-bg);margin:0;}
   body{font-family:var(--up-font-ui);color:var(--up-ink);
-       padding:env(safe-area-inset-top) 0 calc(86px + env(safe-area-inset-bottom,0px));}
+       padding:env(safe-area-inset-top) 0 calc(92px + env(safe-area-inset-bottom,0px));}
   .wrap{max-width:560px;margin:0 auto;padding:0 14px;}
   .up-logo{background-image:url(logo.png);}
-  .cash{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
-        border-radius:20px;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
-  .cash b{display:block;font:400 32px/1 var(--up-font-display);color:var(--up-gold-text);margin-top:6px;}
-  .cash .det{text-align:right;font:600 13px/1.6 var(--up-font-ui);color:var(--up-muted);}
-  .pl{background:var(--up-surface);border:1.5px solid var(--up-line);border-radius:18px;padding:12px 14px;margin-bottom:10px;}
-  .pl.out{opacity:.45;}
-  .pl .hd{display:flex;align-items:center;gap:10px;}
-  .pl .nm{flex:1;min-width:0;font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .pl .sub{color:var(--up-muted);font-size:12.5px;font-weight:600;margin-top:4px;}
-  .btns{display:grid;grid-template-columns:repeat(var(--cols,4),1fr);gap:7px;margin-top:11px;}
-  .btns button{padding:11px 2px;font-size:13px;border-radius:12px;}
-  .b-in{background:var(--up-ok-bg);color:var(--up-ok);border-color:rgba(111,217,162,.3);}
-  .b-out{background:var(--up-bad-bg);color:var(--up-bad);border-color:rgba(224,104,122,.3);}
-  .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(10,9,7,.96);border-top:1px solid var(--up-line);
-       padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));backdrop-filter:blur(8px);}
-  .bar .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
-  .bar .up-btn{padding:12px 6px;font-size:14px;}
-  .done{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
-        border-radius:18px;padding:13px 15px;margin-bottom:12px;font-size:13.5px;line-height:1.5;color:var(--up-muted);}
-  .done .up-btn{margin-top:10px;}
-  .more{width:32px;height:32px;padding:0;border-radius:10px;font-size:17px;line-height:1;flex:none;}
-  .mi{justify-content:flex-start;text-align:left;font-size:13.5px;padding:12px 14px;line-height:1.35;}
-  .mi b{font-weight:800;}
-  .dot{width:8px;height:8px;border-radius:50%;background:var(--up-ok);box-shadow:0 0 8px var(--up-ok);}
+
+  /* ---------- шапка ---------- */
+  .hd2{display:flex;align-items:center;gap:8px;margin-left:auto;}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--up-ok);box-shadow:0 0 8px var(--up-ok);flex:none;}
   .dot.bad{background:var(--up-bad);box-shadow:0 0 8px var(--up-bad);}
-  /* полоса стадии турнира: ребай-период → аддон-тайм → финал */
+  .ico{width:34px;height:34px;padding:0;border-radius:11px;font-size:15px;line-height:1;flex:none;}
+
+  /* ---------- полоса стадии ---------- */
   .stage{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
          border-radius:18px;padding:13px 15px;margin-bottom:12px;}
   .stage .ttl{display:flex;align-items:center;gap:9px;font-weight:800;font-size:15.5px;}
   .stage small{display:block;color:var(--up-muted);font-size:12.5px;font-weight:600;
                margin-top:5px;line-height:1.45;}
   .stage .up-btn{margin-top:11px;}
-  .stage .dot--wait{background:var(--up-gold);box-shadow:0 0 8px var(--up-gold);}
+  .stage .dot--wait{background:var(--up-gold-2);box-shadow:0 0 8px var(--up-gold-2);}
   .stage .dot--fin{background:var(--up-warn);box-shadow:0 0 8px var(--up-warn);}
+
+  /* ---------- деньги ---------- */
+  .cash{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
+        border-radius:20px;padding:14px 18px;display:flex;justify-content:space-between;
+        align-items:center;margin-bottom:12px;}
+  .cash b{display:block;font:400 32px/1 var(--up-font-display);color:var(--up-gold-text);margin-top:6px;}
+  .cash .det{text-align:right;font:600 13px/1.6 var(--up-font-ui);color:var(--up-muted);}
+
+  /* ---------- фильтры ---------- */
+  .fil{display:flex;gap:7px;overflow-x:auto;margin-bottom:12px;padding-bottom:3px;
+       scrollbar-width:none;}
+  .fil::-webkit-scrollbar{display:none;}
+  .fil button{flex:none;padding:9px 13px;font-size:13px;font-weight:700;border-radius:14px;
+              background:var(--up-surface);border:1.5px solid var(--up-line);color:var(--up-muted);}
+  .fil button.on{background:linear-gradient(150deg,#F0DFAE,#D4AF5A);border-color:transparent;color:#1A160E;}
+  .fil b{font-weight:800;}
+
+  /* ---------- карточка игрока ---------- */
+  .pl{background:var(--up-surface);border:1.5px solid var(--up-line);border-radius:18px;
+      padding:12px 14px;margin-bottom:10px;}
+  .pl.out{opacity:.5;}
+  .pl .hd{display:flex;align-items:center;gap:10px;}
+  .pl .nm{flex:1;min-width:0;font-weight:800;font-size:16px;
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pl .sub{color:var(--up-muted);font-size:12.5px;font-weight:600;margin-top:4px;line-height:1.4;}
+  .pl .act{display:flex;gap:8px;margin-top:11px;}
+  .pl .act .up-btn{flex:1;padding:13px 4px;font-size:14.5px;font-weight:800;border-radius:13px;}
+  .more{width:36px;height:36px;padding:0;border-radius:11px;font-size:17px;line-height:1;flex:none;}
+  .b-in{background:var(--up-ok-bg);color:var(--up-ok);border-color:rgba(111,217,162,.35);}
+  .b-out{background:var(--up-bad-bg);color:var(--up-bad);border-color:rgba(224,104,122,.35);}
+  .b-gold{background:linear-gradient(150deg,#F0DFAE,#D4AF5A);color:#1A160E;border-color:transparent;}
+  .seatbadge{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
+             background:rgba(212,175,90,.14);color:var(--up-gold-text);}
+  .noseat{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
+          background:var(--up-warn-bg,rgba(230,180,80,.15));color:var(--up-warn);}
+
+  /* ---------- карта столов ---------- */
+  .tb{background:var(--up-surface);border:1.5px solid var(--up-line);border-radius:18px;
+      padding:12px 13px;margin-bottom:11px;}
+  .tb__h{display:flex;align-items:baseline;gap:9px;margin-bottom:10px;}
+  .tb__h b{font:400 19px/1 var(--up-font-display);color:var(--up-gold-text);}
+  .tb__h span{margin-left:auto;color:var(--up-muted);font-size:12px;font-weight:700;}
+  .seats{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;}
+  .seat{min-height:56px;border-radius:13px;padding:8px 7px;text-align:left;
+        background:rgba(255,255,255,.04);border:1.5px solid var(--up-line);
+        display:flex;flex-direction:column;justify-content:center;cursor:pointer;}
+  .seat i{font-style:normal;display:block;font:700 9.5px var(--up-font-ui);color:var(--up-muted);
+          letter-spacing:.1em;margin-bottom:3px;}
+  .seat b{font-size:12.5px;font-weight:800;line-height:1.2;word-break:break-word;}
+  .seat.free{border-style:dashed;opacity:.55;}
+  .seat.free b{font-weight:600;color:var(--up-muted);}
+  .seat.pick{border-color:var(--up-gold-2);background:rgba(212,175,90,.14);}
+
+  /* ---------- общее ---------- */
+  .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(10,9,7,.96);
+       border-top:1px solid var(--up-line);
+       padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));backdrop-filter:blur(8px);}
+  .bar .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+  .bar .up-btn{padding:13px 6px;font-size:14px;font-weight:800;}
+  .done{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
+        border-radius:18px;padding:13px 15px;margin-bottom:12px;font-size:13.5px;
+        line-height:1.5;color:var(--up-muted);}
+  .done .up-btn{margin-top:10px;}
+  .mi{justify-content:flex-start;text-align:left;font-size:13.5px;padding:12px 14px;line-height:1.35;}
+  .mi b{font-weight:800;}
+  .danger{color:var(--up-bad);border-color:rgba(224,104,122,.35);}
   #sheetText{white-space:pre-line;}
-  /* финальный стол: девять боксов с именами */
+  .sheetScroll{max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  .help{font-size:13.5px;line-height:1.55;color:var(--up-muted);}
+  .help h3{font:400 18px/1.2 var(--up-font-display);color:var(--up-gold-text);margin:16px 0 6px;}
+  .help h3:first-child{margin-top:0;}
+  .help b{color:var(--up-ink);}
+  .help p{margin:0 0 9px;}
+
+  /* финальный стол */
   .fin{background:linear-gradient(150deg,#241D0F,#12100A);border:1.5px solid rgba(212,175,90,.5);
        border-radius:18px;padding:13px 14px;margin-bottom:12px;}
   .fin__h{font:400 19px/1 var(--up-font-display);color:var(--up-gold-text);margin-bottom:11px;}
@@ -59,7 +113,6 @@
   .box i{font:700 9.5px var(--up-font-ui);color:var(--up-muted);letter-spacing:.12em;
          font-style:normal;display:block;margin-bottom:3px;}
   .box b{font-size:12.5px;font-weight:800;line-height:1.25;word-break:break-word;}
-  .box small{display:block;color:var(--up-muted);font-size:10.5px;font-weight:600;margin-top:2px;}
   .box--free{opacity:.4;}
   .box--free b{font-weight:600;}
 </style>
@@ -68,11 +121,14 @@
 <div class="wrap">
   <div class="up-header">
     <div class="up-logo"></div>
-    <div><div style="font:400 20px/1 var(--up-font-display)" id="tname">Касса турнира</div>
-         <div class="up-muted" style="font-size:12px;margin-top:4px" id="tdate">—</div></div>
-    <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-      <span class="dot" id="conn"></span>
-      <button class="up-btn up-btn--sm" id="btnMenu">Меню</button>
+    <div style="min-width:0;flex:1">
+      <div style="font:400 19px/1.1 var(--up-font-display);white-space:nowrap;overflow:hidden;
+                  text-overflow:ellipsis" id="tname">Касса турнира</div>
+      <div class="up-muted" style="font-size:11.5px;margin-top:4px;white-space:nowrap;
+                  overflow:hidden;text-overflow:ellipsis" id="tdate">—</div></div>
+    <div class="hd2">
+      <span class="dot" id="conn" title="связь с сервером"></span>
+      <button class="up-btn up-btn--sm" id="btnHelp">Справка</button>
     </div>
   </div>
 
@@ -80,34 +136,48 @@
   <div id="stageBar"></div>
   <div id="finalBox"></div>
 
-  <div class="cash">
-    <div><span class="up-label">Выручка за вечер</span><b id="total">0 ₽</b></div>
-    <div class="det" id="money">—</div>
-  </div>
+  <!-- ===== экран кассы ===== -->
+  <section id="scList">
+    <div class="cash">
+      <div><span class="up-label">Выручка за вечер</span><b id="total">0 ₽</b></div>
+      <div class="det" id="money">—</div>
+    </div>
 
-  <div class="up-grid-4" id="tiles" style="margin-bottom:12px">
-    <div class="up-tile"><b id="s_alive">0</b><small>В ИГРЕ</small></div>
-    <div class="up-tile"><b id="s_in">0</b><small>ВХОДОВ</small></div>
-    <div class="up-tile"><b id="s_re">0</b><small>РЕБАЕВ</small></div>
-    <div class="up-tile" id="tile_ad"><b id="s_ad">0</b><small>АДДОНОВ</small></div>
-  </div>
+    <div class="up-grid-4" id="tiles" style="margin-bottom:12px">
+      <div class="up-tile"><b id="s_alive">0</b><small>В ИГРЕ</small></div>
+      <div class="up-tile"><b id="s_in">0</b><small>ВХОДОВ</small></div>
+      <div class="up-tile"><b id="s_re">0</b><small>РЕБАЕВ</small></div>
+      <div class="up-tile" id="tile_ad"><b id="s_ad">0</b><small>АДДОНОВ</small></div>
+    </div>
 
-  <input class="up-input" id="q" type="search" placeholder="Поиск по нику" autocomplete="off" style="margin-bottom:12px">
-  <div id="list"></div>
+    <div class="fil" id="filters"></div>
+
+    <input class="up-input" id="q" type="search" placeholder="Поиск по нику"
+           autocomplete="off" style="margin-bottom:12px">
+    <div id="list"></div>
+  </section>
+
+  <!-- ===== экран столов ===== -->
+  <section id="scSeats" style="display:none">
+    <div class="done" id="seatHint"></div>
+    <div id="seatMap"></div>
+  </section>
 </div>
 
 <div class="bar"><div class="in">
   <button class="up-btn up-btn--gold" id="btnAdd">+ Игрок</button>
-  <button class="up-btn" id="btnSeat">Столы</button>
-  <button class="up-btn" id="btnFinish">Завершить</button>
+  <button class="up-btn" id="btnSeats">Столы</button>
+  <button class="up-btn" id="btnBack" style="display:none">К кассе</button>
+  <button class="up-btn" id="btnMore">Ещё</button>
 </div></div>
 
 <div class="up-sheet" id="sheet"><div class="up-sheet__box">
   <div class="up-sheet__grab"></div>
   <h2 class="up-h2" id="sheetTitle">Заголовок</h2>
   <p class="up-muted" id="sheetText" style="font-size:14px;margin:6px 0 14px"></p>
+  <div id="sheetHtml" class="sheetScroll" style="display:none;margin-bottom:12px"></div>
   <div class="up-field" id="sheetField"><input class="up-input" id="sheetInput" type="text"></div>
-  <div id="sheetMenu" style="display:none;flex-direction:column;gap:8px;margin-bottom:12px"></div>
+  <div id="sheetMenu" class="sheetScroll" style="display:none;flex-direction:column;gap:8px;margin-bottom:12px"></div>
   <div style="display:flex;gap:10px">
     <button class="up-btn up-btn--ghost" style="flex:1" id="sheetCancel">Отмена</button>
     <button class="up-btn up-btn--gold" style="flex:1" id="sheetOk">Готово</button>
@@ -118,24 +188,37 @@
 
 <script>
 /* =========================================================
-   Касса турнира. Все данные живут на сервере, не в браузере:
-   можно открыть с двух телефонов, цифры совпадут.
+   Касса турнира Union Poker.
+
+   Всё состояние живёт на сервере, не в браузере: кассу можно
+   открыть одновременно на телефоне и ноутбуке, цифры совпадут.
+
+   Два экрана: список игроков и карта столов.
    ========================================================= */
 const API = '/api/admin';
 let KEY = '';
 try { KEY = localStorage.getItem('up_admin_key') || ''; } catch(e) {}
-let STATE = null;
+let STATE = null, VIEW = 'list', FILTER = 'all', PICK = null;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
-const fmt = n => String(Math.round(n||0)).replace(/\B(?=(\d{3})+(?!\d))/g,' ');
+const fmt = n => String(Math.round(n||0)).replace(/\B(?=(\d{3})+(?!\d))/g,' ');
+const word = (n,a,b,c) => { const t=Math.abs(n)%100, k=t%10;
+  return (t>10&&t<20)?c:(k>1&&k<5)?b:(k===1)?a:c; };
 
 function toast(msg){
   const t = $('toast'); t.textContent = msg; t.classList.add('up-toast--on');
-  clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('up-toast--on'), 1700);
+  clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('up-toast--on'), 2200);
 }
 
-/* ---------- окно вопроса ---------- */
+/* ---------- шторки ---------- */
+function closeSheet(){
+  $('sheet').classList.remove('up-sheet--open');
+  $('sheetMenu').style.display = 'none'; $('sheetMenu').innerHTML = '';
+  $('sheetHtml').style.display = 'none'; $('sheetHtml').innerHTML = '';
+  $('sheetField').style.display = ''; $('sheetOk').style.display = '';
+}
+
 function ask(title, text, value, type){
   return new Promise(resolve => {
     $('sheetTitle').textContent = title;
@@ -144,21 +227,39 @@ function ask(title, text, value, type){
     $('sheetInput').value = value || '';
     $('sheetField').style.display = value === null ? 'none' : '';
     $('sheetMenu').style.display = 'none';
+    $('sheetHtml').style.display = 'none';
     $('sheetOk').style.display = '';
     $('sheet').classList.add('up-sheet--open');
-    setTimeout(()=>$('sheetInput').focus(), 80);
-    const done = v => { $('sheet').classList.remove('up-sheet--open'); resolve(v); };
+    if (value !== null) setTimeout(()=>$('sheetInput').focus(), 80);
+    const done = v => { closeSheet(); resolve(v); };
     $('sheetOk').onclick = () => done($('sheetInput').value.trim());
     $('sheetCancel').onclick = () => done(null);
   });
 }
 
-/* ---------- окно выбора ---------- */
+// подтверждение опасного действия: жмём кнопку, а не пишем слова
+function confirmDo(title, text, okLabel){
+  return new Promise(resolve => {
+    $('sheetTitle').textContent = title;
+    $('sheetText').textContent = text || '';
+    $('sheetField').style.display = 'none';
+    $('sheetHtml').style.display = 'none';
+    $('sheetMenu').style.display = 'none';
+    $('sheetOk').style.display = '';
+    $('sheetOk').textContent = okLabel || 'Да';
+    $('sheet').classList.add('up-sheet--open');
+    const done = v => { $('sheetOk').textContent = 'Готово'; closeSheet(); resolve(v); };
+    $('sheetOk').onclick = () => done(true);
+    $('sheetCancel').onclick = () => done(false);
+  });
+}
+
 function menu(title, text, items){
   return new Promise(resolve => {
     $('sheetTitle').textContent = title;
     $('sheetText').textContent = text || '';
     $('sheetField').style.display = 'none';
+    $('sheetHtml').style.display = 'none';
     $('sheetOk').style.display = 'none';
     const box = $('sheetMenu');
     box.style.display = 'flex';
@@ -166,18 +267,25 @@ function menu(title, text, items){
       '<button class="up-btn up-btn--block ' + (it.cls || '') + '" data-mi="' + i + '">' +
       esc(it.label) + '</button>').join('');
     $('sheet').classList.add('up-sheet--open');
-    const done = v => {
-      $('sheet').classList.remove('up-sheet--open');
-      box.style.display = 'none'; box.innerHTML = '';
-      $('sheetField').style.display = ''; $('sheetOk').style.display = '';
-      resolve(v);
-    };
+    const done = v => { closeSheet(); resolve(v); };
     box.onclick = ev => {
       const b = ev.target.closest('[data-mi]');
       if (b) done(items[+b.dataset.mi].id);
     };
     $('sheetCancel').onclick = () => done(null);
   });
+}
+
+function show(title, html){
+  $('sheetTitle').textContent = title;
+  $('sheetText').textContent = '';
+  $('sheetField').style.display = 'none';
+  $('sheetMenu').style.display = 'none';
+  $('sheetOk').style.display = 'none';
+  const box = $('sheetHtml');
+  box.style.display = ''; box.innerHTML = html;
+  $('sheet').classList.add('up-sheet--open');
+  $('sheetCancel').onclick = closeSheet;
 }
 
 /* ---------- запросы ---------- */
@@ -193,31 +301,35 @@ async function post(path, body){
   return await r.json();
 }
 
+/* ---------- кто есть кто ---------- */
+// Состояние игрока одним словом — от него зависит и вид карточки, и главная кнопка.
+function kind(p, stage){
+  if (p.busted && p.place) return 'out';            // выбыл, место присвоено
+  if (p.busted) return 'nostack';                   // нет стека, может взять ребай
+  if (!p.arrived) return p.wait ? 'wait' : 'unpaid';
+  return 'play';                                    // за столом
+}
+const KIND_CHIP = {
+  out:     '<span class="up-chip up-chip--bad">#PLACE# место</span>',
+  nostack: '<span class="up-chip up-chip--warn">нет стека</span>',
+  wait:    '<span class="up-chip up-chip--warn">лист ожидания</span>',
+  unpaid:  '<span class="up-chip">не оплатил</span>',
+  play:    '<span class="up-chip up-chip--ok">в игре</span>'
+};
+
 /* ---------- отрисовка ---------- */
 function render(){
   if (!STATE) return;
   const t = STATE.tournament, m = STATE.money || {};
-  $('tname').textContent = t.title || 'Касса турнира';
-  $('tdate').innerHTML = (t.weekday ? t.weekday + ', ' : '') + (t.date || '') + ' · ' + (t.time || '') +
-    (STATE.pinned ? ' · выбран вручную' : '') + stateChip(t);
-  $('total').textContent = fmt(STATE.total) + ' ₽';
-  $('money').innerHTML =
-    'входы ' + fmt((m.buyin||{}).sum) + ' ₽<br>' +
-    'ребаи ' + fmt((m.reentry||{}).sum) + ' ₽' +
-    (t.addon ? '<br>аддоны ' + fmt((m.addon||{}).sum) + ' ₽' : '');
-  $('tile_ad').style.display = t.addon ? '' : 'none';
-  $('tiles').className = t.addon ? 'up-grid-4' : 'up-grid-3';
-  $('doneBar').innerHTML = t.status === 'finished'
-    ? '<div class="done">Турнир завершён, очки начислены. Список не стираем: на нём держатся рейтинг ' +
-      'и история в профилях. Как только в афише появится следующий турнир, касса перейдёт на него сама.' +
-      '<button class="up-btn up-btn--gold up-btn--sm up-btn--block" data-new="1">Добавить турнир в афишу</button></div>'
-    : (t.status === 'open' && t.starts_in > 0
-        ? '<div class="done">До начала ' + hhmm(t.starts_in) + '. Записавшиеся уже в списке — ' +
-          'отмечайте вход, когда игроки придут. За 10 минут до старта турнир откроется сам.</div>'
-        : '');
-
-  // полоса стадии: где мы сейчас и чем переключить дальше
   const st = t.stage || 'rebuy';
+
+  $('tname').textContent = t.title || 'Касса турнира';
+  $('tdate').innerHTML = (t.weekday ? t.weekday + ', ' : '') + (t.date || '') + ' · ' +
+    (t.time || '') + (STATE.pinned ? ' · выбран вручную' : '') +
+    (t.status === 'finished' ? ' · <b style="color:var(--up-warn)">завершён</b>'
+     : t.status === 'live' ? ' · <b style="color:var(--up-ok)">идёт</b>' : '');
+
+  // полоса стадии
   const dotCls = st === 'rebuy' ? '' : st === 'addon' ? ' dot--wait' : ' dot--fin';
   $('stageBar').innerHTML = (t.status !== 'live') ? '' :
     '<div class="stage">' +
@@ -229,59 +341,117 @@ function render(){
         : '') +
     '</div>';
 
-  // финальный стол: боксы мест с именами
+  // финальный стол
   const fin = STATE.final || [];
-  $('finalBox').innerHTML = (t.stage === 'final' && fin.length)
+  $('finalBox').innerHTML = (st === 'final' && fin.length)
     ? '<div class="fin"><div class="fin__h">Финальный стол</div><div class="fin__g">' +
       fin.map(b => '<div class="box' + (b.name ? '' : ' box--free') + '">' +
-        '<i>МЕСТО ' + b.seat + '</i><b>' + (b.name ? esc(b.name) : 'свободно') + '</b>' +
-        (b.nick ? '<small>' + esc(b.nick) + '</small>' : '') + '</div>').join('') +
+        '<i>МЕСТО ' + b.seat + '</i><b>' + (b.name ? esc(b.name) : 'свободно') + '</b></div>').join('') +
       '</div></div>'
     : '';
 
+  $('doneBar').innerHTML = t.status === 'finished'
+    ? '<div class="done">Турнир завершён, очки начислены. Список не стираем: на нём держатся ' +
+      'рейтинг и история в профилях. Как только в афише появится следующий турнир, ' +
+      'касса перейдёт на него сама.' +
+      '<button class="up-btn up-btn--gold up-btn--sm up-btn--block" data-new="1">Добавить турнир в афишу</button></div>'
+    : (t.status === 'open' && t.starts_in > 0
+        ? '<div class="done">До начала ' + hhmm(t.starts_in) + '. Записавшиеся уже в списке — ' +
+          'отмечайте вход, когда игроки придут. За 10 минут до старта турнир откроется сам.</div>'
+        : '');
+
+  $('total').textContent = fmt(STATE.total) + ' ₽';
+  $('money').innerHTML =
+    'входы ' + fmt((m.buyin||{}).sum) + ' ₽<br>' +
+    'ребаи ' + fmt((m.reentry||{}).sum) + ' ₽' +
+    (t.addon ? '<br>аддоны ' + fmt((m.addon||{}).sum) + ' ₽' : '');
+  $('tile_ad').style.display = t.addon ? '' : 'none';
+  $('tiles').className = t.addon ? 'up-grid-4' : 'up-grid-3';
   $('s_alive').textContent = STATE.alive;
   $('s_in').textContent = (m.buyin||{}).n || 0;
   $('s_re').textContent = (m.reentry||{}).n || 0;
   $('s_ad').textContent = (m.addon||{}).n || 0;
 
+  if (VIEW === 'seats') { renderSeats(); return; }
+  renderList();
+}
+
+function renderList(){
+  const t = STATE.tournament, st = t.stage || 'rebuy';
+  const all = STATE.players || [];
+  const sm = STATE.seatmap || {tables:[], noseat:[]};
+  const seatOf = {};
+  (sm.tables||[]).forEach(tb => tb.seats.forEach(s => { if (s.player_id) seatOf[s.player_id] = tb.table + '/' + s.seat; }));
+
+  // фильтры со счётчиками — чтобы быстро найти нужных
+  const groups = {
+    all:     all,
+    play:    all.filter(p => kind(p) === 'play'),
+    noseat:  all.filter(p => kind(p) === 'play' && !seatOf[p.id]),
+    nostack: all.filter(p => kind(p) === 'nostack'),
+    unpaid:  all.filter(p => kind(p) === 'unpaid' || kind(p) === 'wait'),
+    out:     all.filter(p => kind(p) === 'out')
+  };
+  const tabs = [
+    ['all','Все'], ['play','За столами'], ['noseat','Без места'],
+    ['nostack','Без стека'], ['unpaid','Не оплатили'], ['out','Выбыли']
+  ].filter(([k]) => k === 'all' || groups[k].length);
+  if (!groups[FILTER] || !groups[FILTER].length) FILTER = 'all';
+  $('filters').innerHTML = tabs.map(([k,label]) =>
+    '<button data-filter="' + k + '" class="' + (k===FILTER?'on':'') + '">' +
+    label + ' <b>' + groups[k].length + '</b></button>').join('');
+
   const query = ($('q').value || '').toLowerCase().trim();
-  const list = STATE.players.filter(p => !query || p.name.toLowerCase().includes(query));
+  const list = groups[FILTER].filter(p => !query || p.name.toLowerCase().includes(query));
   const box = $('list');
-  if (!STATE.players.length) { box.innerHTML = '<div class="up-empty">Пока никто не записан.<br>Игроки появятся, когда запишутся в боте.</div>'; return; }
+
+  if (!all.length) {
+    box.innerHTML = '<div class="up-empty">Пока никто не записан.<br>' +
+      'Игроки появятся, когда запишутся в приложении. Пришедшего без записи ' +
+      'добавьте кнопкой «+ Игрок».</div>';
+    return;
+  }
   if (!list.length) { box.innerHTML = '<div class="up-empty">Никого не найдено</div>'; return; }
 
-  const canBuy   = st === 'rebuy';
-  const canAddon = st === 'addon' && !!t.addon;
-  const cols = canBuy ? 3 : (canAddon ? 2 : 1);
-
   box.innerHTML = list.map(p => {
-    const tag = p.busted ? '<span class="up-chip up-chip--bad">' +
-                  (p.place ? p.place + ' место' : canBuy ? 'без стека' : 'выбыл') + '</span>'
-              : p.arrived ? '<span class="up-chip up-chip--ok">в игре</span>'
-              : p.wait    ? '<span class="up-chip up-chip--warn">лист ожидания</span>'
-                          : '<span class="up-chip">не оплатил</span>';
-    const extra = [];
-    if (p.reentry) extra.push('ребай ×' + p.reentry);
-    if (p.addon)   extra.push('аддон ×' + p.addon);
-    if (p.table_no) extra.push('стол ' + p.table_no + ', место ' + p.seat_no);
+    const k = kind(p);
+    const chip = (KIND_CHIP[k] || '').replace('#PLACE#', p.place);
+    const bits = [];
+    bits.push('№ ' + p.number);
+    if (seatOf[p.id]) {
+      const [tb, s] = seatOf[p.id].split('/');
+      bits.push('<span class="seatbadge">стол ' + tb + ' · место ' + s + '</span>');
+    } else if (k === 'play') {
+      bits.push('<span class="noseat">без места</span>');
+    }
+    if (p.reentry) bits.push('ребай ×' + p.reentry);
+    if (p.addon)   bits.push('аддон ×' + p.addon);
 
-    let btns = '';
-    if (canBuy) btns +=
-        '<button class="up-btn b-in" data-op="buyin" data-id="' + p.id + '">Вход</button>' +
-        '<button class="up-btn" data-op="reentry" data-id="' + p.id + '">Ребай</button>';
-    if (canAddon) btns += p.addon
-      ? '<button class="up-btn" disabled style="opacity:.45">Аддон взят</button>'
-      : '<button class="up-btn b-in" data-op="addon" data-id="' + p.id + '">Аддон</button>';
-    if (!p.busted) btns +=
-        '<button class="up-btn b-out" data-op="bust" data-id="' + p.id + '">' +
-        (canBuy ? 'Нет стека' : 'Выбыл') + '</button>';
+    // одно главное действие — крупное, остальное в «···»
+    let act = '';
+    if (k === 'unpaid' || k === 'wait') {
+      act = btn('buyin', 'Вход · ' + fmt(t.buyin) + ' ₽', 'b-in', p.id);
+    } else if (k === 'nostack') {
+      act = (st === 'rebuy' || st === 'addon')
+        ? btn('reentry', 'Ребай · ' + fmt(t.reentry) + ' ₽', 'b-gold', p.id)
+        : '<button class="up-btn" disabled style="flex:1;opacity:.5">Ребаев больше нет</button>';
+    } else if (k === 'play') {
+      if (st === 'addon' && t.addon && !p.addon) act += btn('addon', 'Аддон · ' + fmt(t.addon) + ' ₽', 'b-in', p.id);
+      act += btn('bust', st === 'rebuy' ? 'Нет стека' : 'Выбыл', 'b-out', p.id);
+    }
 
-    return '<div class="pl' + (p.busted ? ' out' : '') + '" style="--cols:' + cols + '">' +
-      '<div class="hd"><div class="nm">' + esc(p.name) + '</div>' + tag +
-      '<button class="up-btn more" data-more="' + p.id + '" title="Ещё">···</button></div>' +
-      '<div class="sub">№ ' + p.number + (extra.length ? ' · ' + extra.join(' · ') : '') + '</div>' +
-      '<div class="btns">' + btns + '</div></div>';
+    return '<div class="pl' + (k === 'out' ? ' out' : '') + '">' +
+      '<div class="hd"><div class="nm">' + esc(p.name) + '</div>' + chip +
+      '<button class="up-btn more" data-more="' + p.id + '">···</button></div>' +
+      '<div class="sub">' + bits.join(' · ') + '</div>' +
+      (act ? '<div class="act">' + act + '</div>' : '') +
+    '</div>';
   }).join('');
+}
+
+function btn(op, label, cls, id){
+  return '<button class="up-btn ' + cls + '" data-op="' + op + '" data-id="' + id + '">' +
+         esc(label) + '</button>';
 }
 
 function hhmm(min){
@@ -289,12 +459,72 @@ function hhmm(min){
   const h = Math.floor(min/60), m = min%60;
   return (h ? h + ' ч ' : '') + m + ' мин';
 }
-function word(n,a,b,c){ const t=Math.abs(n)%100, k=t%10;
-  return (t>10&&t<20)?c:(k>1&&k<5)?b:(k===1)?a:c; }
-function stateChip(t){
-  if (t.status === 'finished') return ' · <b style="color:var(--up-warn)">завершён</b>';
-  if (t.status === 'live')     return ' · <b style="color:var(--up-ok)">идёт</b>';
-  return '';
+
+/* ---------- карта столов ---------- */
+function renderSeats(){
+  const sm = STATE.seatmap || {tables:[], noseat:[], per:9, auto:true};
+  $('seatHint').innerHTML = sm.auto
+    ? 'Касса сажает пришедших сама, за самый свободный стол. Нажмите на любое место, ' +
+      'чтобы пересадить или посадить вручную — компании удобнее сидеть вместе.' +
+      '<button class="up-btn up-btn--sm up-btn--block" data-mode="manual">Сажать вручную</button>'
+    : 'Ручная рассадка: после оплаты входа игрок ждёт без места, вы сажаете его сами. ' +
+      'Нажмите на свободное место, чтобы кого-то посадить.' +
+      '<button class="up-btn up-btn--sm up-btn--block" data-mode="auto">Пусть касса сажает сама</button>';
+
+  const wait = sm.noseat || [];
+  const waitHtml = wait.length
+    ? '<div class="tb"><div class="tb__h"><b>Ждут места</b><span>' + wait.length + '</span></div>' +
+      '<div class="seats">' + wait.map(p =>
+        '<div class="seat pick" data-noseat="' + p.player_id + '"><i>БЕЗ МЕСТА</i><b>' +
+        esc(p.name) + '</b></div>').join('') + '</div></div>'
+    : '';
+
+  $('seatMap').innerHTML = waitHtml + (sm.tables||[]).map(tb =>
+    '<div class="tb"><div class="tb__h"><b>Стол ' + tb.table + '</b>' +
+      '<span>' + tb.taken + ' из ' + sm.per + '</span></div>' +
+    '<div class="seats">' + tb.seats.map(s =>
+      '<div class="seat' + (s.player_id ? '' : ' free') + '" ' +
+        'data-seat="' + tb.table + ':' + s.seat + '" data-pid="' + s.player_id + '">' +
+        '<i>МЕСТО ' + s.seat + '</i><b>' + (s.player_id ? esc(s.name) : 'свободно') + '</b></div>'
+      ).join('') + '</div></div>').join('');
+}
+
+async function seatTap(table, seat, pid){
+  const sm = STATE.seatmap || {};
+  if (pid) {
+    const p = (STATE.players || []).find(x => x.id === pid);
+    const act = await menu(p ? p.name : 'Игрок', 'Стол ' + table + ', место ' + seat, [
+      { id:'move',  label:'Пересадить на другое место', cls:'up-btn--gold mi' },
+      { id:'free',  label:'Поднять с места', cls:'mi' },
+      { id:'bust',  label:'Отметить выбывание', cls:'mi danger' }
+    ]);
+    if (act === 'move') { PICK = pid; toast('Теперь нажмите, куда пересадить'); return; }
+    if (act === 'free') {
+      const r = await post('/seat-free', { player_id: pid });
+      toast(r.message || 'Готово'); refresh(true); return;
+    }
+    if (act === 'bust') {
+      const r = await post('/op', { player_id: pid, op: 'bust' });
+      toast(r.message || 'Готово'); refresh(true); return;
+    }
+    return;
+  }
+
+  // свободное место: либо сажаем выбранного, либо выбираем из списка
+  if (PICK) {
+    const r = await post('/seat-set', { player_id: PICK, table, seat });
+    PICK = null; toast(r.message || 'Готово'); refresh(true); return;
+  }
+  const free = (sm.noseat || []).slice();
+  const seated = (STATE.players || []).filter(p => kind(p) === 'play' &&
+    !free.some(f => f.player_id === p.id));
+  const items = free.map(p => ({ id:'p' + p.player_id, label:p.name + ' · ждёт места', cls:'up-btn--gold mi' }))
+    .concat(seated.map(p => ({ id:'p' + p.id, label:p.name + ' · пересадить сюда', cls:'mi' })));
+  if (!items.length) { toast('Сажать некого — все уже за столами'); return; }
+  const act = await menu('Стол ' + table + ', место ' + seat, 'Кого посадить сюда?', items);
+  if (!act) return;
+  const r = await post('/seat-set', { player_id: +act.slice(1), table, seat });
+  toast(r.message || 'Готово'); refresh(true);
 }
 
 /* ---------- загрузка ---------- */
@@ -309,100 +539,138 @@ async function refresh(silent){
   }
 }
 
-/* ---------- действия ---------- */
+/* ---------- меню игрока ---------- */
 async function playerMenu(id){
   const p = (STATE.players || []).find(x => x.id === id);
   if (!p) return;
+  const k = kind(p);
   const items = [];
-  if (p.busted) items.push({ id:'unbust', label:'Вернуть в игру', cls:'up-btn--gold' });
-  items.push({ id:'remove', label:'Убрать из турнира' });
-  const act = await menu(p.name, '№ ' + p.number + ' · ' +
-    (p.busted ? (p.place ? p.place + ' место' : 'выбыл') : p.arrived ? 'в игре' : 'вход не оплачен'), items);
+  if (k === 'play') items.push({ id:'seat', label:'Посадить или пересадить', cls:'up-btn--gold mi' });
+  if (p.busted) items.push({ id:'unbust', label:'Вернуть в игру — отметили по ошибке', cls:'up-btn--gold mi' });
+  if (k === 'play') items.push({ id:'bust', label:'Отметить выбывание', cls:'mi' });
+  items.push({ id:'help', label:'Что значат эти кнопки', cls:'mi' });
+  items.push({ id:'remove', label:'Стереть запись — ошибка кассира', cls:'mi danger' });
 
-  if (act === 'unbust'){
-    const r = await post('/unbust', { player_id: id });
-    toast(r.message || 'Готово'); refresh(true);
-  }
-  if (act === 'remove'){
-    const v = await ask('Убрать игрока?',
-      p.name + ' пропадёт из списка вместе со своими покупками — выручка пересчитается. ' +
-      'Если он платил наличными, деньги вернуть нужно самим. Напишите ДА для подтверждения.', 'ДА');
-    if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
-    const r = await post('/remove', { player_id: id });
-    toast(r.message || 'Готово'); refresh(true);
-  }
-}
+  const sub = k === 'out' ? p.place + ' место'
+            : k === 'nostack' ? 'нет стека, может взять ребай'
+            : k === 'play' ? 'за столом'
+            : 'вход не оплачен';
+  const act = await menu(p.name, '№ ' + p.number + ' · ' + sub, items);
 
-async function newTournament(){
-  const base = (STATE && STATE.tournament) || {};
-  const title = await ask('Новый турнир',
-    'Он появится в афише приложения, и на него сразу можно будет записаться.',
-    base.title || 'Вечерний турнир');
-  if (!title) return;
-  const date = await ask('Дата турнира', 'Выберите день.', today(), 'date');
-  if (!date) return;
-  const time = await ask('Время начала', 'Во сколько собираемся.', base.time || '18:00', 'time');
-  if (!time) return;
-  const r = await post('/new-tournament', { title, date, time });
-  toast(r.message || 'Готово');
-  refresh(true);
-}
-
-function today(){
-  const d = new Date(), z = n => String(n).padStart(2,'0');
-  return d.getFullYear() + '-' + z(d.getMonth()+1) + '-' + z(d.getDate());
-}
-
-/* ---------- афиша: список турниров и переключение ---------- */
-async function afishaMenu(){
-  let data;
-  try { data = await get('/afisha'); }
-  catch(e){ toast('Нет связи с сервером'); return; }
-
-  const short = d => String(d||'').replace(/^(\S+)\s+(\S+)$/, (m,a,b) => a + ' ' + b.slice(0,3));
-  const items = (data.items || []).map(t => ({
-    id: 't' + t.id,
-    label: (t.id === data.current ? '● ' : '') + short(t.date) + ', ' + t.time + ' — ' +
-           t.title + ' · ' + t.taken + '/' + t.seats +
-           (t.status === 'live' ? ' · идёт' : ''),
-    cls: 'mi' + (t.id === data.current ? ' up-btn--gold' : '')
-  }));
-  items.push({ id:'new', label:'+ Добавить турнир', cls:'mi' });
-  if (data.pinned) items.push({ id:'auto', label:'Пусть касса выбирает сама', cls:'mi' });
-
-  const act = await menu('Афиша клуба',
-    data.pinned ? 'Турнир выбран вручную. Отметка ✓ — тот, с которым работает касса.'
-                : 'Касса сама держит ближайший турнир. Можно выбрать другой.', items);
-  if (!act) return;
-
-  if (act === 'new') { await newTournament(); return; }
-  if (act === 'auto') {
-    const r = await post('/pin', {});
+  if (act === 'seat'){ VIEW = 'seats'; PICK = id; switchView(); toast('Нажмите место, куда посадить'); return; }
+  if (act === 'bust'){
+    const r = await post('/op', { player_id:id, op:'bust' });
     toast(r.message || 'Готово'); refresh(true); return;
   }
-  const t_id = +act.slice(1);
-  const t = (data.items || []).find(x => x.id === t_id);
-  const what = await menu(t ? t.title : 'Турнир',
-    t ? t.weekday + ', ' + t.date + ' · ' + t.time + ' · записано ' + t.taken : '', [
-      { id:'pin',  label:'Работать с этим турниром', cls:'up-btn--gold' },
-      { id:'del',  label:'Убрать из афиши' }
-    ]);
-  if (what === 'pin'){
-    const r = await post('/pin', { tid: t_id });
-    toast(r.message || 'Готово'); refresh(true);
+  if (act === 'unbust'){
+    const r = await post('/unbust', { player_id: id });
+    toast(r.message || 'Готово'); refresh(true); return;
   }
-  if (what === 'del'){
-    const v = await ask('Убрать турнир из афиши?',
-      'Он исчезнет из приложения вместе со списком записавшихся. Напишите ДА для подтверждения.', 'ДА');
-    if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
-    const r = await post('/delete-tournament', { tid: t_id });
+  if (act === 'help'){ helpSheet(); return; }
+  if (act === 'remove'){
+    const paid = (p.reentry||0) + (p.addon||0) + (p.arrived ? 1 : 0);
+    const okFirst = await confirmDo('Стереть запись игрока?',
+      'Это НЕ выбывание. Если игрок проиграл и ушёл — закройте это окно и нажмите ' +
+      '«Выбыл» в его карточке: место сохранится, деньги останутся в кассе.\n\n' +
+      'Стирание нужно только когда вы ошиблись: пробили не того человека, ' +
+      'или он передумал играть и деньги вернули.' +
+      (paid ? '\n\nУ него есть оплаты — они пропадут, выручка уменьшится.' : ''),
+      'Я ошибся, стереть');
+    if (!okFirst) { toast('Отменено'); return; }
+    let r = await post('/remove', { player_id: id });
+    if (!r.ok && /оплат/i.test(r.message || '')) {
+      const okTwice = await confirmDo('Точно стереть вместе с деньгами?',
+        r.message + '\n\nПосле этого вернуть их можно будет только пробив заново.',
+        'Да, стереть всё');
+      if (!okTwice) { toast('Отменено'); return; }
+      r = await post('/remove', { player_id: id, force: true });
+    }
     toast(r.message || 'Готово'); refresh(true);
   }
 }
 
+/* ---------- справка ---------- */
+const HELP = `
+<h3>С чего начинается вечер</h3>
+<p>Игроки записываются сами в приложении — они уже в списке с отметкой
+<b>не оплатил</b>. Пришёл человек без записи: кнопка <b>+ Игрок</b> внизу.</p>
+
+<h3>Вход</h3>
+<p>Игрок заплатил — жмёте <b>Вход</b>. Касса запишет деньги и, если включена
+автоматическая рассадка, назовёт стол и место. Повторите вслух.</p>
+
+<h3>Нет стека и Ребай</h3>
+<p>Пока идёт ребай-период, у выбывшего кнопка называется <b>Нет стека</b>: это не
+окончательное выбывание, место за ним не закрепляется. Захотел продолжить —
+<b>Ребай</b>, он снова в игре.</p>
+
+<h3>Выбыл</h3>
+<p>После перерыва ребаев нет, и кнопка становится <b>Выбыл</b>. Касса сама
+присвоит место: если в игре было четырнадцать человек, выбывший получает
+четырнадцатое. Этой же кнопкой отмечайте тех, кто ушёл домой.</p>
+
+<h3>Аддон</h3>
+<p>Появляется только в перерыве после ребай-периода. Один раз на игрока, 50 000
+фишек. У взявшего кнопка гаснет.</p>
+
+<h3>Стадии</h3>
+<p>Золотая кнопка вверху переводит турнир дальше: сначала <b>закрыть ребаи</b> —
+начинается перерыв с аддоном и поздней регистрацией, потом <b>закончить
+перерыв</b> — покупок больше нет. Финальный стол при девяти игроках собирается
+сам.</p>
+
+<h3>Столы</h3>
+<p>Кнопка <b>Столы</b> внизу — карта всех мест. Нажмите на место, чтобы
+посадить, пересадить или поднять игрока. Если компания хочет сидеть вместе,
+переключите рассадку на ручную: тогда касса не будет сажать сама, и вы
+расставите людей как нужно.</p>
+
+<h3>Если ошиблись</h3>
+<p>Отметили выбывание зря — <b>···</b> у игрока, затем <b>Вернуть в игру</b>.</p>
+<p><b>Стереть запись</b> — только для своих ошибок: пробили не того человека или
+вернули деньги. Запись исчезнет вместе с оплатами. Для выбывания это НЕ нужно.</p>
+
+<h3>Завершение</h3>
+<p>Когда остался один игрок — <b>Ещё</b> → <b>Завершить турнир</b>. Раньше касса
+не даст. Победителю присвоится первое место, всем начислятся очки сезона.</p>
+
+<h3>Если пропала связь</h3>
+<p>Точка слева от «?» в шапке краснеет. Нажатия в это время не доходят до
+сервера — дождитесь, пока она позеленеет, и повторите последнее действие.</p>
+`;
+function helpSheet(){ show('Справка по кассе', '<div class="help">' + HELP + '</div>'); }
+
+/* ---------- экраны ---------- */
+function switchView(){
+  const seats = VIEW === 'seats';
+  $('scList').style.display = seats ? 'none' : '';
+  $('scSeats').style.display = seats ? '' : 'none';
+  $('btnSeats').style.display = seats ? 'none' : '';
+  $('btnBack').style.display = seats ? '' : 'none';
+  render();
+}
+
+/* ---------- нажатия ---------- */
 document.addEventListener('click', async e => {
   if (e.target.closest('[data-new]')) { await newTournament(); return; }
-  if (e.target.closest('[data-afisha]')) { await afishaMenu(); return; }
+
+  const f = e.target.closest('[data-filter]');
+  if (f) { FILTER = f.dataset.filter; render(); return; }
+
+  const md = e.target.closest('[data-mode]');
+  if (md) {
+    const r = await post('/seat-mode', { mode: md.dataset.mode });
+    toast(r.message || 'Готово'); refresh(true); return;
+  }
+
+  const sseat = e.target.closest('[data-seat]');
+  if (sseat) {
+    const [tb, s] = sseat.dataset.seat.split(':').map(Number);
+    await seatTap(tb, s, +sseat.dataset.pid || 0); return;
+  }
+
+  const ns = e.target.closest('[data-noseat]');
+  if (ns) { PICK = +ns.dataset.noseat; toast('Теперь нажмите свободное место'); return; }
 
   const more = e.target.closest('[data-more]');
   if (more) { await playerMenu(+more.dataset.more); return; }
@@ -420,89 +688,133 @@ document.addEventListener('click', async e => {
 });
 
 $('q').addEventListener('input', render);
+$('btnHelp').onclick = helpSheet;
+$('btnSeats').onclick = () => { VIEW = 'seats'; switchView(); };
+$('btnBack').onclick  = () => { VIEW = 'list'; PICK = null; switchView(); };
 
-/* ---------- стадии турнира ---------- */
+/* ---------- стадии ---------- */
 async function changeStage(stage){
   const texts = {
     addon: ['Закрыть ребаи?',
-      'Вход и ребаи закроются, начнётся аддон-тайм: каждый, кто за столом, ' +
-      'может один раз взять аддон. Игрокам уйдёт сообщение от бота. ' +
-      'Нажимайте, когда закончится последний ребай-уровень. Напишите ДА.'],
-    play: ['Закончить аддон-тайм?',
-      'Покупок больше не будет, столы соберутся заново поровну. ' +
-      'Дальше играем, и когда останется девять человек, финальный стол ' +
-      'соберётся сам. Напишите ДА.']
+      'Начнётся перерыв: откроются аддон и поздняя регистрация, по 1500 ₽ и по ' +
+      '50 000 фишек. Игрокам уйдёт сообщение от бота. Нажимайте, когда закончится ' +
+      'последний ребай-уровень.'],
+    play: ['Закончить перерыв?',
+      'Покупок больше не будет. Дальше играем, и когда останется девять человек, ' +
+      'финальный стол соберётся сам.']
   };
   const t = texts[stage];
   if (!t) return;
-  const v = await ask(t[0], t[1], 'ДА');
-  if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
+  if (!await confirmDo(t[0], t[1], 'Да, перейти')) { toast('Отменено'); return; }
   const res = await post('/stage', { stage });
   toast(res.message || 'Готово');
   refresh(true);
 }
 
-/* ---------- столы ---------- */
-$('btnSeat').onclick = async () => {
-  const tabs = (STATE && STATE.seating) || [];
-  const lines = tabs.length
-    ? tabs.map(t => {
-        const head = 'Стол ' + t.table + ' — ' + t.players.length +
-                     (t.free ? ', свободно ' + t.free : ' (полный)');
-        const who = t.players.length
-          ? t.players.map(p => '   место ' + p.seat + ' · ' + p.name).join('\n')
-          : '   пусто';
-        return head + '\n' + who;
-      }).join('\n\n')
-    : 'За столами пока никого. Игроки садятся сами, как только оплатят вход.';
+/* ---------- афиша ---------- */
+async function newTournament(){
+  const base = (STATE && STATE.tournament) || {};
+  const title = await ask('Новый турнир',
+    'Он появится в афише приложения, и на него сразу можно будет записаться.',
+    base.title || 'Турнир клуба');
+  if (!title) return;
+  const date = await ask('Дата турнира', 'Выберите день.', today(), 'date');
+  if (!date) return;
+  const time = await ask('Время начала', 'Во сколько собираемся.', base.time || '20:00', 'time');
+  if (!time) return;
+  const r = await post('/new-tournament', { title, date, time });
+  toast(r.message || 'Готово');
+  refresh(true);
+}
+function today(){
+  const d = new Date(), z = n => String(n).padStart(2,'0');
+  return d.getFullYear() + '-' + z(d.getMonth()+1) + '-' + z(d.getDate());
+}
 
-  const act = await menu('Столы', lines, [
-    { id:'rebalance', label:'Пересобрать поровну', cls:'up-btn--gold' },
-    { id:'shuffle',   label:'Перетасовать всех заново' }
-  ]);
-  if (act === 'rebalance'){
-    const res = await post('/rebalance', {});
-    toast(res.message || 'Готово'); refresh(true);
-  }
-  if (act === 'shuffle'){
-    const v = await ask('Перетасовать всех?',
-      'Все, кто ещё в игре, получат новые столы и места случайным образом. Напишите ДА.', 'ДА');
-    if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
-    const res = await post('/seat', {});
-    toast(res.message || 'Готово'); refresh(true);
-  }
-};
-
-$('btnMenu').onclick = async () => {
-  const t = (STATE && STATE.tournament) || {};
-  const act = await menu('Касса',
-    t.title ? t.title + ' · ' + (t.date || '') + ' ' + (t.time || '') : 'Сервер не отвечает', [
-      { id:'afisha', label:'Афиша клуба', cls:'up-btn--gold' },
-      { id:'key',    label:'Ключ доступа' }
+async function afishaMenu(){
+  let data;
+  try { data = await get('/afisha'); }
+  catch(e){ toast('Нет связи с сервером'); return; }
+  const short = d => String(d||'').replace(/^(\S+)\s+(\S+)$/, (m,a,b) => a + ' ' + b.slice(0,3));
+  const items = (data.items || []).map(t => ({
+    id: 't' + t.id,
+    label: (t.id === data.current ? '● ' : '') + short(t.date) + ', ' + t.time + ' — ' +
+           t.title + ' · ' + t.taken + '/' + t.seats + (t.status === 'live' ? ' · идёт' : ''),
+    cls: 'mi' + (t.id === data.current ? ' up-btn--gold' : '')
+  }));
+  items.push({ id:'new', label:'+ Добавить турнир', cls:'mi' });
+  if (data.pinned) items.push({ id:'auto', label:'Пусть касса выбирает сама', cls:'mi' });
+  const act = await menu('Афиша клуба',
+    data.pinned ? 'Турнир выбран вручную. ● — тот, с которым работает касса.'
+                : 'Касса сама держит ближайший турнир. Можно выбрать другой.', items);
+  if (!act) return;
+  if (act === 'new') { await newTournament(); return; }
+  if (act === 'auto') { const r = await post('/pin', {}); toast(r.message||'Готово'); refresh(true); return; }
+  const t_id = +act.slice(1);
+  const t = (data.items || []).find(x => x.id === t_id);
+  const what = await menu(t ? t.title : 'Турнир',
+    t ? t.weekday + ', ' + t.date + ' · ' + t.time + ' · записано ' + t.taken : '', [
+      { id:'pin', label:'Работать с этим турниром', cls:'up-btn--gold mi' },
+      { id:'del', label:'Убрать из афиши', cls:'mi danger' }
     ]);
-  if (act === 'afisha') { await afishaMenu(); return; }
-  if (act === 'key'){
-    const v = await ask('Ключ доступа', 'Тот же ключ, что в config.json на сервере.', KEY);
-    if (v === null) return;
-    KEY = v; try { localStorage.setItem('up_admin_key', KEY); } catch(e) {}
-    refresh();
+  if (what === 'pin'){ const r = await post('/pin', { tid: t_id }); toast(r.message||'Готово'); refresh(true); }
+  if (what === 'del'){
+    if (!await confirmDo('Убрать турнир из афиши?',
+      'Он исчезнет из приложения вместе со списком записавшихся.', 'Убрать')) { toast('Отменено'); return; }
+    const r = await post('/delete-tournament', { tid: t_id });
+    toast(r.message || 'Готово'); refresh(true);
   }
-};
+}
 
+/* ---------- нижние кнопки ---------- */
 $('btnAdd').onclick = async () => {
-  const name = await ask('Новый игрок', 'Ник игрока. Он сразу попадёт в список турнира.', '');
+  const name = await ask('Новый игрок',
+    'Ник, под которым объявлять за столом. Игрок сразу попадёт в список турнира. ' +
+    'Такой профиль не привязан к Telegram — лучше, если человек зарегистрируется в боте сам.', '');
   if (!name) return;
   const res = await post('/add-player', { name });
   toast(res.message || 'Добавлен');
   refresh(true);
 };
 
-$('btnFinish').onclick = async () => {
-  const v = await ask('Завершить турнир?', 'Последнему игроку присвоится 1 место, всем начислятся очки рейтинга. Отменить будет нельзя. Напишите СТОП для отмены или ДА для подтверждения.', 'ДА');
-  if (!v || v.trim().toUpperCase() !== 'ДА') { toast('Отменено'); return; }
-  const res = await post('/finish', {});
-  toast(res.message || 'Готово');
-  refresh(true);
+$('btnMore').onclick = async () => {
+  const t = (STATE && STATE.tournament) || {};
+  const act = await menu('Ещё',
+    t.title ? t.title + ' · ' + (t.date || '') + ' ' + (t.time || '') : 'Сервер не отвечает', [
+      { id:'help',   label:'Справка по кассе', cls:'up-btn--gold mi' },
+      { id:'afisha', label:'Афиша клуба', cls:'mi' },
+      { id:'seatm',  label:'Режим рассадки', cls:'mi' },
+      { id:'key',    label:'Ключ доступа', cls:'mi' },
+      { id:'finish', label:'Завершить турнир', cls:'mi danger' }
+    ]);
+  if (act === 'help') { helpSheet(); return; }
+  if (act === 'afisha') { await afishaMenu(); return; }
+  if (act === 'seatm'){
+    const auto = !(STATE && STATE.seatmap && STATE.seatmap.auto === false);
+    const pick = await menu('Режим рассадки',
+      auto ? 'Сейчас: касса сажает пришедших сама.' : 'Сейчас: сажаете вручную.', [
+        { id:'auto',   label:'Касса сажает сама', cls: auto ? 'up-btn--gold mi' : 'mi' },
+        { id:'manual', label:'Сажаю вручную', cls: auto ? 'mi' : 'up-btn--gold mi' }
+      ]);
+    if (!pick) return;
+    const r = await post('/seat-mode', { mode: pick });
+    toast(r.message || 'Готово'); refresh(true); return;
+  }
+  if (act === 'key'){
+    const v = await ask('Ключ доступа', 'Тот же ключ, что в config.json на сервере.', KEY);
+    if (v === null) return;
+    KEY = v; try { localStorage.setItem('up_admin_key', KEY); } catch(e) {}
+    refresh(); return;
+  }
+  if (act === 'finish'){
+    if (!await confirmDo('Завершить турнир?',
+      'Последнему игроку присвоится первое место, всем начислятся очки сезона. ' +
+      'Отменить будет нельзя. Если турнир ещё идёт — закройте это окно.',
+      'Завершить')) { toast('Отменено'); return; }
+    const res = await post('/finish', {});
+    toast(res.message || 'Готово');
+    refresh(true);
+  }
 };
 
 /* ---------- старт ---------- */
@@ -512,7 +824,7 @@ $('btnFinish').onclick = async () => {
     if (v) { KEY = v; try { localStorage.setItem('up_admin_key', KEY); } catch(e) {} }
   }
   refresh();
-  setInterval(() => refresh(true), 5000);   // сами подтягиваем изменения
+  setInterval(() => refresh(true), 5000);
 })();
 </script>
 </body>

@@ -957,6 +957,81 @@ def seat_player(entry_id, t_id):
     return t, s
 
 
+def auto_seat_on():
+    """Сажает ли касса сама. Можно переключить прямо в кассе."""
+    v = setting("seat_mode")
+    if v in ("auto", "manual"):
+        return v == "auto"
+    return bool(CFG.get("auto_seat", True))
+
+
+def seat_set(player_id, table, seat, admin=None):
+    """Сажает игрока на конкретное место. Если место занято — меняет местами."""
+    per, tc = per_table(), tables_count()
+    try:
+        table, seat = int(table), int(seat)
+    except (TypeError, ValueError):
+        return False, "Непонятное место"
+    if not (1 <= table <= tc and 1 <= seat <= per):
+        return False, f"Стол 1–{tc}, место 1–{per}"
+    t_id = tid()
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (t_id, player_id), one=True)
+    if not e:
+        return False, "Игрока нет в турнире"
+    if not e["arrived"]:
+        return False, "Сначала отметьте вход"
+    if e["busted"]:
+        return False, "Игрок выбыл — сначала верните его в игру"
+
+    busy = q("""SELECT * FROM entries WHERE tid=? AND arrived=1 AND busted=0
+                AND table_no=? AND seat_no=?""", (t_id, table, seat), one=True)
+    if busy and busy["id"] != e["id"]:
+        # меняем двоих местами — так проще всего пересадить, не освобождая место
+        x("UPDATE entries SET table_no=?, seat_no=? WHERE id=?",
+          (e["table_no"], e["seat_no"], busy["id"]))
+    x("UPDATE entries SET table_no=?, seat_no=? WHERE id=?", (table, seat, e["id"]))
+    log(admin, f"игрок {player_id} посажен за стол {table}, место {seat}")
+    who = q("SELECT name FROM players WHERE id=?", (player_id,), one=True)
+    nm = who["name"] if who else "Игрок"
+    if busy and busy["id"] != e["id"]:
+        other = q("SELECT p.name FROM entries e JOIN players p ON p.id=e.player_id "
+                  "WHERE e.id=?", (busy["id"],), one=True)
+        return True, f"{nm} и {other['name'] if other else 'игрок'} поменялись местами"
+    return True, f"{nm} · стол {table}, место {seat}"
+
+
+def seat_free(player_id, admin=None):
+    """Поднимает игрока с места, не трогая его участие в турнире."""
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
+    if not e:
+        return False, "Игрока нет в турнире"
+    x("UPDATE entries SET table_no=0, seat_no=0 WHERE id=?", (e["id"],))
+    log(admin, f"игрок {player_id} поднят с места")
+    return True, "Игрок без места"
+
+
+def seat_map():
+    """Полная карта столов: каждое место с игроком или пустое."""
+    per, tc = per_table(), tables_count()
+    rows = q("""SELECT p.id, p.name, p.number, e.table_no, e.seat_no FROM entries e
+                JOIN players p ON p.id=e.player_id
+                WHERE e.tid=? AND e.arrived=1 AND e.busted=0""", (tid(),))
+    at = {(r["table_no"], r["seat_no"]): r for r in rows if r["table_no"]}
+    out = []
+    for t in range(1, tc + 1):
+        seats = []
+        for s_ in range(1, per + 1):
+            r = at.get((t, s_))
+            seats.append({"seat": s_, "player_id": r["id"] if r else 0,
+                          "name": r["name"] if r else "", "number": r["number"] if r else 0})
+        out.append({"table": t, "seats": seats,
+                    "taken": sum(1 for x_ in seats if x_["player_id"])})
+    return {"tables": out, "per": per,
+            "noseat": [{"player_id": r["id"], "name": r["name"], "number": r["number"]}
+                       for r in rows if not r["table_no"]],
+            "auto": auto_seat_on()}
+
+
 def clear_seat(entry_id):
     x("UPDATE entries SET table_no=0, seat_no=0 WHERE id=?", (entry_id,))
 
@@ -1018,16 +1093,22 @@ def purchase(player_id, kind, admin=None):
         if e["arrived"]:
             return False, "Вход уже оплачен"
         x("UPDATE entries SET arrived=1, busted=0, place=0, wait=0 WHERE id=?", (e["id"],))
-        tb, st = seat_player(e["id"], row["id"])
-        seat_msg = f" · стол {tb}, место {st}" if tb else " · свободных мест нет"
+        if auto_seat_on():
+            tb, st = seat_player(e["id"], row["id"])
+            seat_msg = f" · стол {tb}, место {st}" if tb else " · свободных мест нет"
+        else:
+            seat_msg = " · посадите за стол"
     elif kind == "reentry":
         if not e["arrived"]:
             return False, "Сначала оплатите вход"
         if not e["busted"]:
             return False, "Игрок ещё в игре — ребай берут, когда кончился стек"
         x("UPDATE entries SET busted=0, place=0 WHERE id=?", (e["id"],))
-        tb, st = seat_player(e["id"], row["id"])
-        seat_msg = f" · стол {tb}, место {st}" if tb else " · свободных мест нет"
+        if auto_seat_on():
+            tb, st = seat_player(e["id"], row["id"])
+            seat_msg = f" · стол {tb}, место {st}" if tb else " · свободных мест нет"
+        else:
+            seat_msg = " · посадите за стол"
     elif kind == "addon":
         if not e["arrived"] or e["busted"]:
             return False, "Игрок не за столом"
@@ -1062,7 +1143,7 @@ def bust(player_id, admin=None):
     # После перерыва новых входов нет, поэтому лишние столы закрываем сами:
     # стол на одного-двух человек — это не игра. В ребай-период не трогаем,
     # там народ ещё приходит и возвращается.
-    if stage_of(t_row(tid())) == "play":
+    if stage_of(t_row(tid())) == "play" and auto_seat_on():
         in_use = len({r["table_no"] for r in q(
             """SELECT DISTINCT table_no FROM entries
                WHERE tid=? AND arrived=1 AND busted=0 AND table_no>0""", (tid(),))})
@@ -1108,16 +1189,31 @@ def seating():
     return out
 
 
-def remove_entry(player_id, admin=None):
-    """Убирает игрока из турнира вместе с его покупками. Для ошибок и отказов."""
+def entry_money(player_id, t_id=None):
+    """Сколько этот игрок уже оплатил в текущем турнире."""
+    r = q("""SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS sum FROM purchases
+             WHERE tid=? AND player_id=?""", (t_id or tid(), player_id), one=True)
+    return r["n"], r["sum"]
+
+
+def remove_entry(player_id, admin=None, force=False):
+    """Стирает запись игрока вместе с оплатами. Только для ошибок кассира.
+
+    Это НЕ выбывание: для выбывания есть bust(). Если у человека есть оплаты,
+    по умолчанию отказываем — иначе одним нажатием уходит выручка вечера.
+    """
     e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (tid(), player_id), one=True)
     if not e:
         return False, "Игрока нет в турнире"
+    n, total = entry_money(player_id)
+    if n and not force:
+        return False, (f"У игрока {n} {plural(n, 'оплата', 'оплаты', 'оплат')} "
+                       f"на {total} ₽. Если он выбыл — нажмите «Выбыл»")
     x("DELETE FROM purchases WHERE tid=? AND player_id=?", (tid(), player_id))
     x("DELETE FROM entries WHERE id=?", (e["id"],))
-    log(admin, f"игрок {player_id} убран из турнира")
+    log(admin, f"стёрта запись игрока {player_id}" + (f" с оплатами на {total} ₽" if n else ""))
     promote_from_waitlist()
-    return True, "Игрок убран из турнира"
+    return True, "Запись стёрта" + (f", выручка уменьшилась на {total} ₽" if n else "")
 
 
 def unbust(player_id, admin=None):
@@ -1761,6 +1857,7 @@ class Handler(BaseHTTPRequestHandler):
                 "players": [dict(r) for r in rows],
                 "alive": alive_count(),
                 "seating": seating(),
+                "seatmap": seat_map(),
                 "final": final_table(),
                 "final_at": final_at(),
                 "money": {r["kind"]: {"n": r["n"], "sum": r["sum"]} for r in money},
@@ -1872,6 +1969,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json_out({"ok": ok, "message": msg,
                                       "tournament": current_tournament()})
 
+            if path == "/api/admin/seat-set":
+                ok, msg = seat_set(body.get("player_id"), body.get("table"),
+                                   body.get("seat"), "admin")
+                return self.json_out({"ok": ok, "message": msg, "seatmap": seat_map()})
+
+            if path == "/api/admin/seat-free":
+                ok, msg = seat_free(body.get("player_id"), "admin")
+                return self.json_out({"ok": ok, "message": msg, "seatmap": seat_map()})
+
+            if path == "/api/admin/seat-mode":
+                mode = body.get("mode")
+                if mode not in ("auto", "manual"):
+                    return self.json_out({"ok": False, "message": "Неизвестный режим"})
+                setting("seat_mode", mode)
+                log("admin", f"рассадка: {mode}")
+                return self.json_out({"ok": True, "auto": mode == "auto",
+                                      "message": "Касса сажает сама" if mode == "auto"
+                                                 else "Сажаете вручную"})
+
             if path == "/api/admin/rebalance":
                 n, tabs = rebalance("admin")
                 if not n:
@@ -1882,7 +1998,8 @@ class Handler(BaseHTTPRequestHandler):
                                                  f"{plural(tabs, 'столе', 'столах', 'столах')}"})
 
             if path == "/api/admin/remove":
-                ok, msg = remove_entry(body.get("player_id"), "admin")
+                ok, msg = remove_entry(body.get("player_id"), "admin",
+                                       force=bool(body.get("force")))
                 return self.json_out({"ok": ok, "message": msg})
 
             if path == "/api/admin/unbust":
