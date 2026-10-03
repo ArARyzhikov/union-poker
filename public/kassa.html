@@ -924,15 +924,41 @@ async function dupesMenu(){
 }
 
 /* ---------- нижние кнопки ---------- */
-$('btnAdd').onclick = async () => {
+$('btnAdd').onclick = async () => { await addPlayer(''); };
+
+// Ник в клубе один на человека. Совпал — спрашиваем, тот ли это человек:
+// молча брать чужой профиль нельзя, туда уедут чужие деньги и история.
+async function addPlayer(start){
   const name = await ask('Новый игрок',
     'Ник, под которым объявлять за столом. Игрок сразу попадёт в список турнира. ' +
-    'Такой профиль не привязан к Telegram — лучше, если человек зарегистрируется в боте сам.', '');
+    'Такой профиль не привязан к Telegram — лучше, если человек зарегистрируется в боте сам.',
+    start || '');
   if (!name) return;
   const res = await post('/add-player', { name });
+
+  if (res.exists) {
+    const e = res.exists;
+    const act = await menu('Такой ник уже есть',
+      '№' + e.number + ' · ' + e.name + ' · ' +
+      (e.telegram ? 'зарегистрирован в приложении' : 'завёл кассир') +
+      ' · турниров ' + e.games, [
+        { id:'same', label:'Это он — добавить в турнир', cls:'up-btn--gold mi' },
+        { id:'other', label:'Нет, это другой человек', cls:'mi' }
+      ]);
+    if (act === 'same') {
+      const r = await post('/add-player', { use_id: e.id });
+      toast(r.message || 'Добавлен'); refresh(true); return;
+    }
+    if (act === 'other') {
+      toast('Добавьте к нику отличие — букву фамилии');
+      await addPlayer(name + ' ');
+    }
+    return;
+  }
+
   toast(res.message || 'Добавлен');
   refresh(true);
-};
+}
 
 $('btnMore').onclick = async () => {
   const t = (STATE && STATE.tournament) || {};

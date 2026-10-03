@@ -273,6 +273,10 @@ _lock = threading.RLock()
 db = sqlite3.connect(DB_PATH, check_same_thread=False)
 db.row_factory = sqlite3.Row
 
+# Своя lower(): встроенная в SQLite работает только с латиницей, поэтому
+# «Савелий» и «савелий» считались разными именами, а ники должны совпадать.
+db.create_function("lower", 1, lambda s: s.lower() if isinstance(s, str) else s)
+
 
 def q(sql, args=(), one=False):
     """Запрос на чтение."""
@@ -487,10 +491,29 @@ def log(who, action):
     x("INSERT INTO log(who, action) VALUES(?,?)", (str(who), action))
 
 
+def clean_name(v):
+    """Ник без лишних пробелов. Длину ограничиваем, иначе ломается карта столов."""
+    v = re.sub(r"\s+", " ", str(v or "").strip())
+    return v[:24]
+
+
 def real_name(v):
     """Ник годится любой, лишь бы он был: две буквы и больше."""
-    v = str(v or "").strip()
+    v = clean_name(v)
     return len(v) >= 2 and any(c.isalpha() for c in v)
+
+
+def name_owner(name, not_id=None):
+    """Кто уже носит этот ник. Ник в клубе один на человека: за столом
+    объявляют по нику, и два одинаковых — это путаница и двойные профили."""
+    name = clean_name(name)
+    if not name:
+        return None
+    row = q("SELECT * FROM players WHERE lower(name)=lower(?) ORDER BY id LIMIT 1", (name,),
+            one=True)
+    if row and not_id and row["id"] == not_id:
+        return None
+    return row
 
 
 def norm_phone(p):
@@ -2420,14 +2443,23 @@ class Handler(BaseHTTPRequestHandler):
             phone = norm_phone(body.get("phone")) or setting(f"phone:{tgid}")
             if not phone or len(phone) < 12:
                 return self.json_out({"ok": False, "message": "Неверный номер телефона"})
-            name = (body.get("name") or "").strip()
+            name = clean_name(body.get("name"))
             if not real_name(name):
                 # подставлять ник из Telegram нельзя: в списке участников и в
                 # кассе должно стоять имя, по которому человека объявляют
-                name = " ".join(filter(None, [u.get("first_name"), u.get("last_name")])).strip()
+                name = clean_name(" ".join(filter(None, [u.get("first_name"),
+                                                         u.get("last_name")])))
                 if not real_name(name):
                     return self.json_out({"ok": False,
                                           "message": "Впишите ник"})
+            busy = name_owner(name)
+            if busy:
+                # Одинаковые ники — это путаница за столом и двойные профили.
+                return self.json_out({"ok": False, "name_taken": True,
+                                      "message": f"Ник «{name}» уже занят. Придумайте другой — "
+                                                 "например, добавьте первую букву фамилии. "
+                                                 "А если вас уже записал администратор, "
+                                                 "скажите ему на входе."})
             was = find_player(tgid, phone)
             p = save_player(tgid, name, u.get("username"), phone)
             if not was:
@@ -2499,13 +2531,31 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json_out({"ok": ok, "message": msg})
 
             if path == "/api/admin/add-player":
-                name = (body.get("name") or "").strip()
-                if not name:
-                    return self.json_out({"ok": False, "message": "Пустое имя"})
-                exist = q("SELECT * FROM players WHERE lower(name)=lower(?)", (name,), one=True)
-                pid = exist["id"] if exist else x(
-                    "INSERT INTO players(name, number) VALUES(?,?)", (name, next_number()))
+                name = clean_name(body.get("name"))
+                use_id = int(body.get("use_id") or 0)
+                if use_id:
+                    # кассир подтвердил: это тот самый человек из клуба
+                    p = q("SELECT * FROM players WHERE id=?", (use_id,), one=True)
+                    if not p:
+                        return self.json_out({"ok": False, "message": "Игрок не найден"})
+                    x("INSERT OR IGNORE INTO entries(tid, player_id) VALUES(?,?)", (tid(), use_id))
+                    return self.json_out({"ok": True, "player_id": use_id,
+                                          "message": f"{p['name']} добавлен в турнир"})
+                if not real_name(name):
+                    return self.json_out({"ok": False, "message": "Впишите ник"})
+                busy = name_owner(name)
+                if busy:
+                    # Молча брать чужой профиль нельзя: деньги и история уедут не тому.
+                    games = q("SELECT COUNT(*) AS n FROM entries WHERE player_id=?",
+                              (busy["id"],), one=True)["n"]
+                    return self.json_out({
+                        "ok": False, "exists": {
+                            "id": busy["id"], "number": busy["number"], "name": busy["name"],
+                            "telegram": bool(busy["tg_id"]), "games": games},
+                        "message": f"В клубе уже есть №{busy['number']} {busy['name']}"})
+                pid = x("INSERT INTO players(name, number) VALUES(?,?)", (name, next_number()))
                 x("INSERT OR IGNORE INTO entries(tid, player_id) VALUES(?,?)", (tid(), pid))
+                log("admin", f"касса завела профиль: {name}")
                 return self.json_out({"ok": True, "message": "Добавлен", "player_id": pid})
 
             if path == "/api/admin/seat":
