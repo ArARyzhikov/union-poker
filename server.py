@@ -284,6 +284,37 @@ def q(sql, args=(), one=False):
     return rows
 
 
+BACKUP_DIR = os.path.join(BASE, "backup")
+
+
+def backup_db():
+    """Копия базы в папку backup. Делается сама: при запуске и раз в три часа.
+
+    Храним последние 60 копий — это примерно неделя. Копия снимается средствами
+    SQLite, поэтому её можно делать на ходу, не останавливая турнир.
+    """
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        dst = os.path.join(BACKUP_DIR, datetime.now().strftime("club-%Y-%m-%d-%H%M.db"))
+        with _lock:
+            out = sqlite3.connect(dst)
+            try:
+                db.backup(out)
+            finally:
+                out.close()
+        old = sorted(f for f in os.listdir(BACKUP_DIR)
+                     if f.startswith("club-") and f.endswith(".db"))
+        for f in old[:-60]:
+            try:
+                os.remove(os.path.join(BACKUP_DIR, f))
+            except OSError:
+                pass
+        return dst
+    except Exception as e:
+        print("Не удалось сделать копию базы:", e)
+        return ""
+
+
 def x(sql, args=()):
     """Запрос на запись. Возвращает id вставленной строки."""
     with _lock:
@@ -477,19 +508,125 @@ def next_number():
     return (row["m"] or 0) + 1
 
 
-def save_player(tg_id, name, username, phone):
-    """Регистрация игрока. Один человек — один профиль."""
+def find_player(tg_id, phone=None, name=None):
+    """Ищет человека: по Telegram, по телефону и — только если попросили — по имени.
+
+    По имени при регистрации не ищем намеренно: двух Александров склеивать
+    нельзя, чужой турнир и чужие деньги попадут не тому. Поиск по имени нужен
+    кассе, чтобы предложить объединить профили вручную.
+    """
+    if tg_id:
+        row = q("SELECT * FROM players WHERE tg_id=?", (tg_id,), one=True)
+        if row:
+            return row
     phone = norm_phone(phone)
-    row = q("SELECT * FROM players WHERE tg_id=? OR (phone IS NOT NULL AND phone=?)",
-            (tg_id, phone), one=True)
+    if phone:
+        row = q("SELECT * FROM players WHERE phone=?", (phone,), one=True)
+        if row:
+            return row
+    if name and str(name).strip():
+        row = q("SELECT * FROM players WHERE tg_id IS NULL AND lower(name)=lower(?) "
+                "ORDER BY id LIMIT 1", (str(name).strip(),), one=True)
+        if row:
+            return row
+    return None
+
+
+def dupe_groups():
+    """Профили, которые похожи на один и тот же человек: совпало имя или телефон.
+
+    Решает всегда человек: касса только показывает находки.
+    """
+    rows = q("""SELECT p.id, p.number, p.name, p.phone, p.tg_id, p.created,
+                       (SELECT COUNT(*) FROM entries e WHERE e.player_id=p.id) AS games
+                FROM players p ORDER BY p.number""")
+    by_key = {}
+    for r in rows:
+        keys = [("имя", (r["name"] or "").strip().lower())]
+        if r["phone"]:
+            keys.append(("телефон", r["phone"]))
+        for kind, key in keys:
+            if key:
+                by_key.setdefault((kind, key), []).append(dict(r))
+    out, seen = [], set()
+    for (kind, key), items in by_key.items():
+        if len(items) < 2:
+            continue
+        ids = tuple(sorted(i["id"] for i in items))
+        if ids in seen:
+            continue
+        seen.add(ids)
+        out.append({"why": kind, "players": sorted(items, key=lambda i: i["number"])})
+    return out
+
+
+def merge_players(keep_id, drop_id, admin=None):
+    """Склеивает два профиля одного человека. История и деньги переезжают."""
+    keep_id, drop_id = int(keep_id or 0), int(drop_id or 0)
+    if not keep_id or not drop_id or keep_id == drop_id:
+        return False, "Нужны два разных профиля"
+    keep = q("SELECT * FROM players WHERE id=?", (keep_id,), one=True)
+    drop = q("SELECT * FROM players WHERE id=?", (drop_id,), one=True)
+    if not keep or not drop:
+        return False, "Профиль не найден"
+
+    x("UPDATE purchases SET player_id=? WHERE player_id=?", (keep_id, drop_id))
+    x("UPDATE consents  SET player_id=? WHERE player_id=?", (keep_id, drop_id))
+    for e in q("SELECT * FROM entries WHERE player_id=?", (drop_id,)):
+        mine = q("SELECT * FROM entries WHERE tid=? AND player_id=?",
+                 (e["tid"], keep_id), one=True)
+        if not mine:
+            x("UPDATE entries SET player_id=? WHERE id=?", (keep_id, e["id"]))
+            continue
+        # в одном турнире оба профиля — оставляем ту запись, где больше правды
+        x("""UPDATE entries SET arrived=MAX(arrived,?), busted=MAX(busted,?),
+                                place=CASE WHEN place=0 THEN ? ELSE place END,
+                                points=MAX(points,?),
+                                table_no=CASE WHEN table_no=0 THEN ? ELSE table_no END,
+                                seat_no=CASE WHEN seat_no=0 THEN ? ELSE seat_no END
+             WHERE id=?""",
+          (e["arrived"], e["busted"], e["place"], e["points"],
+           e["table_no"] or 0, e["seat_no"] or 0, mine["id"]))
+        x("DELETE FROM entries WHERE id=?", (e["id"],))
+
+    # сначала убираем лишний профиль, иначе телефон и Telegram не дадут скопировать
+    number = min(keep["number"] or 0, drop["number"] or 0) or keep["number"]
+    x("DELETE FROM players WHERE id=?", (drop_id,))
+    x("""UPDATE players SET tg_id=COALESCE(tg_id, ?), phone=COALESCE(phone, ?),
+                            username=COALESCE(username, ?), fio=COALESCE(fio, ?),
+                            born=COALESCE(born, ?), id_ok=COALESCE(id_ok, ?),
+                            number=?
+         WHERE id=?""",
+      (drop["tg_id"], drop["phone"], drop["username"], drop["fio"], drop["born"],
+       drop["id_ok"], number, keep_id))
+    log(admin or "admin",
+        f"профили объединены: №{drop['number']} ({drop['name']}) → №{number} ({keep['name']})")
+    return True, f"Объединено в профиль №{number} · {keep['name']}"
+
+
+def save_player(tg_id, name, username, phone):
+    """Регистрация игрока. Один человек — один профиль, номер не меняется."""
+    phone = norm_phone(phone)
+    row = find_player(tg_id, phone)
     if row:
-        x("UPDATE players SET tg_id=?, name=?, username=?, phone=COALESCE(phone,?) WHERE id=?",
+        # номер клуба и дату вступления не трогаем никогда
+        x("UPDATE players SET tg_id=COALESCE(?, tg_id), name=?, username=?, "
+          "phone=COALESCE(phone, ?) WHERE id=?",
           (tg_id, name, username, phone, row["id"]))
+        log(tg_id, f"вход в клуб: {name} — профиль №{row['number']} уже был")
         return q("SELECT * FROM players WHERE id=?", (row["id"],), one=True)
     num = next_number()
-    pid = x("INSERT INTO players(tg_id, name, username, phone, number) VALUES(?,?,?,?,?)",
-            (tg_id, name, username, phone, num))
-    log(tg_id, f"регистрация: {name}")
+    try:
+        pid = x("INSERT INTO players(tg_id, name, username, phone, number) VALUES(?,?,?,?,?)",
+                (tg_id, name, username, phone, num))
+    except sqlite3.IntegrityError:
+        # кто-то успел зарегистрироваться тем же номером телефона или
+        # аккаунтом — отдаём уже существующий профиль, а не создаём второй
+        row = find_player(tg_id, phone)
+        if row:
+            return row
+        raise
+    log(tg_id, f"НОВЫЙ участник клуба №{num}: {name}")
     return q("SELECT * FROM players WHERE id=?", (pid,), one=True)
 
 
@@ -742,11 +879,16 @@ def notify_start(t_id):
 
 def ticker():
     """Раз в минуту: открыть турнир, если пора, и время от времени достроить афишу."""
+    last_backup = 0
     while True:
         try:
             auto_live()
             if now().minute % 30 == 0:
                 ensure_events()
+            # копия базы раз в три часа: единственная защита от «всё пропало»
+            if time.time() - last_backup > 3 * 3600:
+                last_backup = time.time()
+                backup_db()
         except Exception:
             traceback.print_exc()
         time.sleep(60)
@@ -2201,6 +2343,23 @@ class Handler(BaseHTTPRequestHandler):
                         WHERE e.tid=? ORDER BY e.id""", (tid(),))
             return self.json_out([{"name": r["name"], "number": r["number"]} for r in rows])
 
+        if path == "/api/admin/dupes":
+            # Похожие профили: один человек записан дважды.
+            if not self.admin_ok():
+                return self.json_out({"error": "Нет доступа"}, 403)
+            total = q("SELECT COUNT(*) AS n FROM players", one=True)["n"]
+            recent = q("""SELECT id, number, name, tg_id, phone, created
+                          FROM players ORDER BY id DESC LIMIT 15""")
+            signups = q("""SELECT ts, who, action FROM log
+                           WHERE action LIKE '%клуб%' OR action LIKE '%егистрация%'
+                           ORDER BY id DESC LIMIT 20""")
+            return self.json_out({
+                "groups": dupe_groups(), "total": total,
+                "recent": [{"number": r["number"], "name": r["name"],
+                            "telegram": bool(r["tg_id"]), "phone": r["phone"] or "",
+                            "created": r["created"]} for r in recent],
+                "signups": [dict(r) for r in signups]})
+
         if path == "/api/admin/consents":
             # Кто подписал документы клуба, когда и какую редакцию.
             if not self.admin_ok():
@@ -2249,10 +2408,16 @@ class Handler(BaseHTTPRequestHandler):
         body = self.body_json()
 
         if path == "/api/signup":
-            u = self.tg_user()
-            if not u:
+            u = self.tg_user() or {}
+            tgid = self.tg_id()
+            if tgid is None:
                 return self.json_out({"ok": False, "message": "Откройте приложение из бота"}, 401)
-            phone = norm_phone(body.get("phone")) or setting(f"phone:{u['id']}")
+            # Уже в клубе — ничего не создаём и не спрашиваем заново.
+            have = find_player(tgid)
+            if have:
+                return self.json_out({"ok": True, "message": "Вы уже в клубе",
+                                      "number": have["number"]})
+            phone = norm_phone(body.get("phone")) or setting(f"phone:{tgid}")
             if not phone or len(phone) < 12:
                 return self.json_out({"ok": False, "message": "Неверный номер телефона"})
             name = (body.get("name") or "").strip()
@@ -2263,8 +2428,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not real_name(name):
                     return self.json_out({"ok": False,
                                           "message": "Впишите ник"})
-            p = save_player(u["id"], name, u.get("username"), phone)
-            welcome(p)
+            was = find_player(tgid, phone)
+            p = save_player(tgid, name, u.get("username"), phone)
+            if not was:
+                welcome(p)      # приветствие шлём только настоящему новичку
             return self.json_out({"ok": True, "message": "Добро пожаловать в клуб",
                                   "number": p["number"]})
 
@@ -2356,6 +2523,16 @@ class Handler(BaseHTTPRequestHandler):
                 st["recv"] = int(time.time() * 1000)
                 setting("timer_state", json.dumps(st, ensure_ascii=False))
                 return self.json_out({"ok": True})
+
+            if path == "/api/admin/merge":
+                ok, msg = merge_players(body.get("keep_id"), body.get("drop_id"), "admin")
+                return self.json_out({"ok": ok, "message": msg})
+
+            if path == "/api/admin/backup":
+                p = backup_db()
+                return self.json_out({"ok": bool(p),
+                                      "message": ("Копия базы сделана: " + os.path.basename(p))
+                                                 if p else "Не получилось сделать копию"})
 
             if path == "/api/admin/id-check":
                 # Администратор посмотрел документ на входе: человеку 18+ и это он.
@@ -2478,6 +2655,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     init_db()
+    backup_db()          # копия при каждом запуске — до того, как что-то пойдёт не так
     os.makedirs(PUBLIC, exist_ok=True)
     ensure_events(quiet=False)
     auto_live()

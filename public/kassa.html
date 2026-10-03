@@ -712,6 +712,20 @@ const HELP = `
 не хранит. Посмотрели: <b>···</b> → <b>Документ проверен, 18+</b>. В карточке
 появится зелёная метка <b>паспорт ✓</b>, и в следующий раз спрашивать не нужно.</p>
 
+<h3>Двойные профили</h3>
+<p>Один человек может оказаться в клубе дважды: сначала его завёл кассир
+кнопкой <b>+ Игрок</b>, потом он сам зарегистрировался в приложении. У него
+будет два номера и две истории.</p>
+<p><b>Ещё</b> → <b>Двойные профили</b> покажет совпадения по имени и телефону.
+Касса сама ничего не склеивает: двух разных Александров объединять нельзя.
+Решаете вы, и всё переезжает в профиль с меньшим номером — турниры, оплаты,
+подписанные документы.</p>
+
+<h3>Копия базы</h3>
+<p>Сервер сам делает копию при запуске и каждые три часа, хранит последние
+шестьдесят. Перед чем-то рискованным можно сделать копию руками:
+<b>Ещё</b> → <b>Сделать копию базы</b>. Это секунда, турнир не прерывается.</p>
+
 <h3>Если ошиблись</h3>
 <p>Отметили выбывание зря — <b>···</b> у игрока, затем <b>Вернуть в игру</b>.</p>
 <p><b>Стереть запись</b> — только для своих ошибок: пробили не того человека или
@@ -863,6 +877,52 @@ async function afishaMenu(){
   }
 }
 
+/* ---------- двойные профили ----------
+   Один человек записался дважды: завёл профиль в приложении, а до этого его
+   добавил кассир кнопкой «+ Игрок». Склеиваем вручную — автоматика может
+   склеить двух разных Александров.                                          */
+async function dupesMenu(){
+  let d;
+  try { d = await get('/dupes'); }
+  catch (e) { toast('Нет связи с сервером'); return; }
+  const groups = d.groups || [];
+  if (!groups.length) {
+    show('Двойные профили',
+      '<div class="help"><p>Совпадений нет: в клубе ' + d.total +
+      ' профилей, и ни у кого не повторяются имя или телефон.</p></div>');
+    return;
+  }
+  const pick = await menu('Двойные профили',
+    'Нашлось совпадений: ' + groups.length + '. Проверьте, точно ли это один человек.',
+    groups.map((g, i) => ({
+      id: String(i),
+      label: g.players.map(p => '№' + p.number + ' ' + p.name).join('  ·  ') +
+             '  (' + g.why + ')',
+      cls: 'mi'
+    })));
+  if (pick === null || pick === undefined || pick === '') return;
+  const g = groups[+pick];
+  if (!g) return;
+
+  const keep = g.players[0];
+  const rest = g.players.slice(1);
+  const lines = g.players.map(p =>
+    '№' + p.number + ' · ' + p.name + ' · ' + (p.tg_id ? 'из приложения' : 'завёл кассир') +
+    ' · турниров ' + p.games + (p.phone ? ' · ' + p.phone : '')).join('\n');
+  const ok = await confirmDo('Это один человек?',
+    lines + '\n\nВсё переедет в профиль №' + keep.number + ' · ' + keep.name +
+    ': турниры, оплаты, подписанные документы. Остальные профили исчезнут.\n\n' +
+    'Если это разные люди — закройте окно, ничего не произойдёт.',
+    'Да, это один человек');
+  if (!ok) { toast('Отменено'); return; }
+  for (const p of rest) {
+    const r = await post('/merge', { keep_id: keep.id, drop_id: p.id });
+    if (!r.ok) { toast(r.message || 'Не получилось'); return; }
+  }
+  toast('Объединено в профиль №' + keep.number);
+  refresh(true);
+}
+
 /* ---------- нижние кнопки ---------- */
 $('btnAdd').onclick = async () => {
   const name = await ask('Новый игрок',
@@ -881,10 +941,17 @@ $('btnMore').onclick = async () => {
       { id:'help',   label:'Справка по кассе', cls:'up-btn--gold mi' },
       { id:'afisha', label:'Афиша клуба', cls:'mi' },
       { id:'seatm',  label:'Режим рассадки', cls:'mi' },
+      { id:'dupes',  label:'Двойные профили', cls:'mi' },
+      { id:'backup', label:'Сделать копию базы', cls:'mi' },
       { id:'key',    label:'Ключ доступа', cls:'mi' },
       { id:'finish', label:'Завершить турнир', cls:'mi danger' }
     ]);
   if (act === 'help') { helpSheet(); return; }
+  if (act === 'dupes') { await dupesMenu(); return; }
+  if (act === 'backup'){
+    const r = await post('/backup', {});
+    toast(r.message || 'Готово'); return;
+  }
   if (act === 'afisha') { await afishaMenu(); return; }
   if (act === 'seatm'){
     const auto = !(STATE && STATE.seatmap && STATE.seatmap.auto === false);
