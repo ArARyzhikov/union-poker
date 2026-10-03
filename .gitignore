@@ -4,3 +4,4 @@ club.db
 __pycache__/
 backup/
 .venv/
+config.json.old
