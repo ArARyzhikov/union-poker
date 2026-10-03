@@ -467,9 +467,9 @@ button.warn2{color:#E0687A;margin-right:auto;}
 <script>
 (function(){
 "use strict";
-var KEY='unionpoker.timer.v3';
+var KEY='unionpoker.timer.v4';
 var DEF={
-  name:'Турнир клуба', sub:'Union Poker · спортивный покер', entries:36, len:12,
+  name:'Турнир клуба', sub:'Union Poker · спортивный покер', entries:36, len:10,
   struct:[
     '100 200 200','200 400 400','300 600 600','400 800 800','500 1000 1000',
     'перерыв 10',
@@ -1120,6 +1120,18 @@ function pull(){
       if(d.seats)S.cfg.entries=d.seats|0;
       if(d.final_at)S.cfg.finalAt=d.final_at|0;
       if(d.late_levels)S.cfg.reentryTo=d.late_levels|0;
+
+      // Структура и длина уровня живут на сервере — он единственный источник.
+      // Пока турнир идёт, не трогаем: менять длину уровня на ходу нельзя.
+      if(S.paused){
+        if(d.level_minutes&&S.cfg.len!==(d.level_minutes|0))S.cfg.len=d.level_minutes|0;
+        if(d.structure&&d.structure.length){
+          var st=d.structure.map(function(l){
+            return (typeof l==='string')?l:l.join(' ');
+          }).join('\n');
+          if(st!==S.cfg.struct){S.cfg.struct=st;S.idx=Math.min(S.idx,0);}
+        }
+      }
 
       var fin=d.final||[];
       var names=[];

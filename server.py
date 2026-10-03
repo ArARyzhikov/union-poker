@@ -44,7 +44,7 @@ DEFAULT_CFG = {
     # Версия формата настроек. Когда она меняется, сервер сам обновляет
     # config.json под новый формат, сохранив ваши личные строки: токен,
     # админов, ключ кассы, адрес приложения и афишу.
-    "cfg_version": 6,
+    "cfg_version": 7,
 
     "bot_token": "",                       # токен от @BotFather
     "proxy": "",                           # если Telegram недоступен: "http://127.0.0.1:2080"
@@ -108,7 +108,7 @@ DEFAULT_CFG = {
         [7500, 15000, 15000], [10000, 20000, 20000], [15000, 30000, 30000],
         [25000, 50000, 50000], [50000, 100000, 100000]
     ],
-    "level_minutes": 12,
+    "level_minutes": 10,
     "late_levels": 10,                     # до конца какого уровня идут ребаи и поздняя запись
     "cancel_before_min": 10,               # за сколько минут до старта закрывается отмена записи
     "open_before_min": 10,                 # за сколько минут до старта турнир открывается в кассе
@@ -118,7 +118,7 @@ DEFAULT_CFG = {
 
     "rules": [
         "Играть можно только после регистрации в боте клуба",
-        "Старт в 20:00, стартовый стек 25 000, уровни по 12 минут",
+        "Старт в 20:00, стартовый стек 25 000, уровни по 10 минут",
         "Формат анте — большой блайнд (BB ante)",
         "Вход 1500 ₽ открыт до конца 10 уровня — заходить можно в любой момент",
         "Ребай 1500 ₽ — когда кончился стек, без ограничения по количеству",
@@ -165,10 +165,15 @@ def load_cfg():
                 old_events.append(e)
         fresh["events"] = old_events
         try:
-            os.replace(CFG_PATH, CFG_PATH + ".old")
+            # Старый конфиг прячем в backup: он содержит токен, а папка backup
+            # не попадает в git. Раньше он ложился рядом с кодом и уехал в GitHub.
+            old_dir = os.path.join(BASE, "backup")
+            os.makedirs(old_dir, exist_ok=True)
+            os.replace(CFG_PATH, os.path.join(
+                old_dir, datetime.now().strftime("config-%Y-%m-%d-%H%M.json")))
             with open(CFG_PATH, "w", encoding="utf-8") as f:
                 json.dump(fresh, f, ensure_ascii=False, indent=2)
-            print("config.json обновлён под новый формат. Старый лежит рядом: config.json.old")
+            print("config.json обновлён под новый формат. Старый лежит в папке backup.")
             CFG_UPGRADED = True
         except Exception as e:
             print("! Не получилось обновить config.json:", e)
