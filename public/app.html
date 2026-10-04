@@ -211,6 +211,11 @@
            color:var(--up-gold-text);font:800 11px/22px var(--up-font-ui);text-align:center;font-style:normal;flex:none;}
   .rules li{margin-bottom:10px;}
 
+  /* кружок с инициалами в шапке — это кнопка профиля */
+  #me{border:0;font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;
+      transition:transform .12s ease, box-shadow .12s ease;}
+  #me:active{transform:scale(.93);}
+
   /* ---- документы клуба ---- */
   .doc{background:var(--up-surface);border:1px solid var(--up-line);border-radius:var(--up-r);
        padding:14px;margin-bottom:12px;}
@@ -255,7 +260,8 @@
   <div class="up-header">
     <div class="up-logo" id="logo"></div>
     <div class="up-wordmark"><b>UNION</b><small>POKER</small></div>
-    <div class="up-avatar" id="me" style="margin-left:auto">—</div>
+    <button class="up-avatar" id="me" data-go="profile" aria-label="Профиль"
+            style="margin-left:auto">—</button>
   </div>
 
   <!-- ===== ГЛАВНАЯ ===== -->
@@ -1296,6 +1302,7 @@ document.addEventListener('click', async e => {
   const nav = e.target.closest('[data-go]');
   if (nav) {
     e.preventDefault();
+    if (nav.dataset.go === 'profile' && GUEST) { showSignup(); return; }
     if (nav.dataset.go === 'event') {
       if (!CUR && list().length) CUR = list()[0].id;
       PART = nav.dataset.part || 'info';
