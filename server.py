@@ -44,7 +44,7 @@ DEFAULT_CFG = {
     # Версия формата настроек. Когда она меняется, сервер сам обновляет
     # config.json под новый формат, сохранив ваши личные строки: токен,
     # админов, ключ кассы, адрес приложения и афишу.
-    "cfg_version": 7,
+    "cfg_version": 8,
 
     "bot_token": "",                       # токен от @BotFather
     "proxy": "",                           # если Telegram недоступен: "http://127.0.0.1:2080"
@@ -118,7 +118,7 @@ DEFAULT_CFG = {
 
     "rules": [
         "Играть можно только после регистрации в боте клуба",
-        "Старт в 20:00, стартовый стек 25 000, уровни по 10 минут",
+        "Стартовый стек 25 000, уровни по 10 минут",
         "Формат анте — большой блайнд (BB ante)",
         "Вход 1500 ₽ открыт до конца 10 уровня — заходить можно в любой момент",
         "Ребай 1500 ₽ — когда кончился стек, без ограничения по количеству",
@@ -151,7 +151,10 @@ def load_cfg():
     global CFG_UPGRADED
     if cfg.get("cfg_version") != DEFAULT_CFG["cfg_version"]:
         keep = ("bot_token", "proxy", "admins", "admin_key", "app_url", "club", "port", "dev",
-                "schedule")
+                "schedule",
+                # цены, время старта и число мест — это настройки клуба, а не
+                # код: при обновлении их больше не сбрасываем
+                "tournament")
         fresh = json.loads(json.dumps(DEFAULT_CFG))
         for k in keep:
             if k in cfg:
@@ -2481,6 +2484,19 @@ class Handler(BaseHTTPRequestHandler):
             return self.json_out({"players": out,
                                   "docs": [{"code": d["code"], "title": d["title"],
                                             "version": d["version"]} for d in docs]})
+
+        # Короткие адреса: их реально набрать пультом телевизора.
+        #   /tv    — второй экран таймера, повторяет главный
+        #   /timer — главный экран
+        #   /kassa, /app — касса и приложение
+        SHORT = {"/tv": "/timer.html?screen=2", "/tv2": "/timer.html?screen=2",
+                 "/timer": "/timer.html", "/kassa": "/kassa.html", "/app": "/app.html"}
+        if path in SHORT:
+            self.send_response(302)
+            self.send_header("Location", SHORT[path])
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
 
         # --- статика ---
         rel = path.lstrip("/") or "app.html"

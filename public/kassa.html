@@ -310,11 +310,27 @@ async function get(path){
   if (r.status === 403) throw new Error('Неверный ключ');
   return await r.json();
 }
+// Интернет в клубе бывает слабым. Запрос не может висеть вечно: через
+// 12 секунд обрываем и честно говорим, что не дошло. Нажатие при этом не
+// теряется молча — кассир видит сообщение и повторяет.
 async function post(path, body){
-  const r = await fetch(API + path + '?key=' + encodeURIComponent(KEY), {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})
-  });
-  return await r.json();
+  const ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+  const timer = setTimeout(() => { if (ctl) ctl.abort(); }, 12000);
+  try {
+    const r = await fetch(API + path + '?key=' + encodeURIComponent(KEY), {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body||{}), signal: ctl ? ctl.signal : undefined
+    });
+    if (r.status === 403) return { ok:false, message:'Неверный ключ доступа' };
+    return await r.json();
+  } catch (e) {
+    const slow = e && (e.name === 'AbortError');
+    return { ok:false, offline:true, message: slow
+      ? 'Сервер не ответил за 12 секунд. Проверьте связь и нажмите ещё раз'
+      : 'Нет связи с сервером. Нажмите ещё раз' };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /* ---------- кто есть кто ---------- */
@@ -812,10 +828,19 @@ document.addEventListener('click', async e => {
 
   const b = e.target.closest('[data-op]');
   if (!b) return;
+  if (b.disabled) return;              // двойное нажатие — вторая оплата, так нельзя
   b.disabled = true;
-  const res = await post('/op', { player_id: +b.dataset.id, op: b.dataset.op });
-  b.disabled = false;
-  toast(res.message || 'Готово');
+  const was = b.textContent;
+  b.textContent = 'Отправляю...';
+  try {
+    const res = await post('/op', { player_id: +b.dataset.id, op: b.dataset.op });
+    toast(res.message || 'Готово');
+  } finally {
+    // кнопку возвращаем всегда, даже если связь оборвалась: иначе она
+    // останется серой и будет казаться, что касса зависла
+    b.disabled = false;
+    b.textContent = was;
+  }
   refresh(true);
 });
 
