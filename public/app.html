@@ -211,6 +211,15 @@
            color:var(--up-gold-text);font:800 11px/22px var(--up-font-ui);text-align:center;font-style:normal;flex:none;}
   .rules li{margin-bottom:10px;}
 
+  /* логотип и надпись в шапке ведут на главную */
+  /* у логотипа своё золотое кольцо и фон — их не трогаем, только поведение */
+  #logo{padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent;
+        transition:opacity .12s ease;}
+  #wordmark{background:none;border:0;padding:0;font:inherit;color:inherit;
+            cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:left;
+            transition:opacity .12s ease;}
+  #logo:active, #wordmark:active{opacity:.6;}
+
   /* кружок с инициалами в шапке — это кнопка профиля */
   #me{border:0;font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;
       transition:transform .12s ease, box-shadow .12s ease;}
@@ -258,8 +267,8 @@
 
 <div class="app">
   <div class="up-header">
-    <div class="up-logo" id="logo"></div>
-    <div class="up-wordmark"><b>UNION</b><small>POKER</small></div>
+    <button class="up-logo" id="logo" data-go="home" aria-label="На главную"></button>
+    <button class="up-wordmark" id="wordmark" data-go="home"><b>UNION</b><small>POKER</small></button>
     <button class="up-avatar" id="me" data-go="profile" aria-label="Профиль"
             style="margin-left:auto">—</button>
   </div>

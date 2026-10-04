@@ -1879,6 +1879,67 @@ def welcome(p):
                      "Запись на турниры — в приложении клуба, кнопка «Клуб» внизу.")
 
 
+def num(n):
+    """12345 → 12 345, чтобы в сообщении читалось как на афише."""
+    return f"{int(n or 0):,}".replace(",", "\u2009")
+
+
+def mail_on(tg_id):
+    """Человек не отписался от рассылки клуба."""
+    return setting(f"nomail:{tg_id}") != "1"
+
+
+def announce_text():
+    """Текст рассылки про ближайший турнир — тот же, что видно на афише."""
+    t = current_tournament()
+    if not t or t["status"] == "finished":
+        return ""
+    when = f"{t['weekday']}, {t['date']} · {t['time']}"
+    dt = parse_dt(t.get("start"))
+    today = bool(dt and dt.date() == now().date())
+    head = "<b>Сегодня в клубе</b>" if today else "<b>Ближайший турнир</b>"
+    lines = [head, "", f"<b>{t['title']}</b>", when, ""]
+    money = f"Вход {num(t['buyin'])} ₽"
+    if t.get("reentry"):
+        money += f" · ребай {num(t['reentry'])} ₽"
+    if t.get("addon"):
+        money += f" · аддон {num(t['addon'])} ₽"
+    lines.append(money)
+    lines.append(f"Стартовый стек {num(t['stack'])} · уровни по "
+                 f"{CFG.get('level_minutes', 10)} минут")
+    if t["status"] == "live":
+        lines.append("")
+        lines.append("Турнир уже идёт — ещё можно зайти, пока открыта регистрация.")
+    elif t.get("free", 0) > 0:
+        lines.append(f"Свободно {t['free']} из {t['seats']} мест")
+    else:
+        lines.append("Мест нет — можно записаться в лист ожидания")
+    lines += ["", "Записаться — кнопкой ниже или в приложении клуба.",
+              "", "<i>Не хотите такие сообщения — отправьте боту /stop</i>"]
+    return "\n".join(lines)
+
+
+def broadcast(text, admin_chat=None):
+    """Рассылка всем участникам клуба. Идёт в отдельном потоке: игроков может
+    быть много, а касса не должна ждать."""
+    rows = q("SELECT id, tg_id FROM players WHERE tg_id IS NOT NULL ORDER BY id")
+    sent = failed = off = 0
+    for r in rows:
+        if not mail_on(r["tg_id"]):
+            off += 1
+            continue
+        if send(r["tg_id"], text, inline=afisha_buttons(r["id"])):
+            sent += 1
+        else:
+            failed += 1
+        time.sleep(0.06)        # Telegram не любит больше 20-30 сообщений в секунду
+    log("admin", f"рассылка: доставлено {sent}, не дошло {failed}, отписаны {off}")
+    if admin_chat:
+        send(admin_chat, f"Рассылка закончена.\nДоставлено: <b>{sent}</b>\n"
+                         f"Не дошло: {failed}\nОтписались раньше: {off}")
+    return sent, failed, off
+
+
 def afisha_text(player_id=None):
     """Вся лента афиши одним сообщением."""
     items = feed()
@@ -1989,6 +2050,17 @@ def handle_update(u):
     if text == "/id":
         send(chat, f"Ваш Telegram ID: <code>{frm.get('id')}</code>")
         return
+
+    if text == "/stop":
+        setting(f"nomail:{frm.get('id')}", "1")
+        send(chat, "Больше не будем присылать сообщения об афише. "
+                   "Записаться на турнир по-прежнему можно в приложении клуба.\n\n"
+                   "Вернуть рассылку — команда /start", inline=app_button())
+        return
+
+    if text == "/start" and setting(f"nomail:{frm.get('id')}") == "1":
+        setting(f"nomail:{frm.get('id')}", "0")
+        send(chat, "Рассылка клуба включена обратно.")
 
     # --- админ ---
     if is_admin(frm.get("id")):
@@ -2681,6 +2753,25 @@ class Handler(BaseHTTPRequestHandler):
                 log("admin", f"удалён профиль №{p['number']} {p['name']}")
                 return self.json_out({"ok": True,
                                       "message": f"Профиль №{p['number']} {p['name']} удалён"})
+
+            if path == "/api/admin/broadcast":
+                # Рассылка участникам клуба. Сначала касса просит текст
+                # (preview), показывает его кассиру, и только потом отправляет.
+                text = (body.get("text") or "").strip() or announce_text()
+                if not text:
+                    return self.json_out({"ok": False,
+                                          "message": "Нечего рассылать: турнира в афише нет"})
+                total = q("SELECT COUNT(*) AS n FROM players WHERE tg_id IS NOT NULL",
+                          one=True)["n"]
+                off = sum(1 for r in q("SELECT tg_id FROM players WHERE tg_id IS NOT NULL")
+                          if not mail_on(r["tg_id"]))
+                if body.get("preview"):
+                    return self.json_out({"ok": True, "text": text,
+                                          "total": total, "off": off})
+                who = (CFG.get("admins") or [None])[0]
+                threading.Thread(target=broadcast, args=(text, who), daemon=True).start()
+                return self.json_out({"ok": True,
+                                      "message": f"Отправляю {total - off} участникам"})
 
             if path == "/api/admin/tournament-test":
                 ok, msg = set_test(body.get("tid"), bool(body.get("on")), "admin")
