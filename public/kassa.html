@@ -151,7 +151,8 @@
 
   <div id="doneBar"></div>
   <div id="stageBar"></div>
-  <div id="finalBox"></div>
+  <div id="koBox"></div>
+<div id="finalBox"></div>
 
   <!-- ===== экран кассы ===== -->
   <section id="scList">
@@ -383,6 +384,17 @@ function render(){
 
   // финальный стол
   const fin = STATE.final || [];
+  // фишки за нокауты — показываем, как только их начали считать
+  $('koBox').innerHTML = (STATE.chips || []).length
+    ? '<div class="up-card" style="padding:12px 13px;margin-bottom:11px">' +
+      '<div class="up-row__sub" style="margin-bottom:7px">Фишки за нокауты · ' +
+      (STATE.chip_points || 10) + ' очков за фишку</div>' +
+      (STATE.chips || []).slice(0, 8).map(k =>
+        '<div style="display:flex;justify-content:space-between;padding:4px 0;font-weight:700">' +
+        '<span>' + esc(k.name) + '</span><span class="up-chip">' + k.n + '</span></div>').join('') +
+      '</div>'
+    : '';
+
   $('finalBox').innerHTML = (st === 'final' && fin.length)
     ? '<div class="fin"><div class="fin__h">Финальный стол</div><div class="fin__g">' +
       fin.map(b => '<div class="box' + (b.name ? '' : ' box--free') + '">' +
@@ -468,6 +480,7 @@ function renderList(){
     }
     if (p.reentry) bits.push('ребай ×' + p.reentry);
     if (p.addon)   bits.push('аддон ×' + p.addon);
+    if (p.chips)   bits.push('<span class="seatbadge">фишек ' + p.chips + '</span>');
     if (!p.docs)   bits.push('<span class="nodocs">нет документов</span>');
     else if (p.id_ok) bits.push('<span class="idok">паспорт ✓</span>');
 
@@ -755,6 +768,18 @@ const HELP = `
 <p>Менять можно только турниры, которые ещё не сыграны. Если сдвинуть время,
 расписание не подставит на это место второй турнир: в клубе один турнир в день.</p>
 
+<h3>Фишки за нокауты</h3>
+<p>Выбил соперника — получил фишку. Кто кого выбил, касса не отслеживает и во
+время игры ничего не спрашивает: фишки на руках у игроков.</p>
+<p>В конце вечера, перед завершением турнира: <b>Ещё → Фишки за нокауты</b>.
+Список всех игроков, нажимаете на человека и вписываете число сданных фишек.
+Одна фишка — <b>10 очков сезона</b>, они добавятся к очкам за место при
+завершении турнира.</p>
+<p>Сколько у кого фишек, видно на главном экране кассы, в карточке игрока
+(«фишек 3») и в приложении у игроков. Исправить можно в любой момент, пока
+турнир не завершён — вписали другое число, оно и останется.</p>
+<p>Цена фишки лежит в <code>config.json</code>, строка <code>chip_points</code>.</p>
+
 <h3>Форматы турнира</h3>
 <p>Карточка турнира называется по формату: Rebuy, Freezeout, Bounty, Deepstack,
 Turbo, Mystery Bounty, Main Event. У каждого свой цвет и свой рисунок — игрок
@@ -894,6 +919,7 @@ document.addEventListener('click', async e => {
   try {
     const res = await post('/op', { player_id: +b.dataset.id, op: b.dataset.op });
     toast(res.message || 'Готово');
+
   } finally {
     // кнопку возвращаем всегда, даже если связь оборвалась: иначе она
     // останется серой и будет казаться, что касса зависла
@@ -1018,6 +1044,39 @@ async function afishaMenu(){
       'Он исчезнет из приложения вместе со списком записавшихся.', 'Убрать')) { toast('Отменено'); return; }
     const r = await post('/delete-tournament', { tid: t_id });
     toast(r.message || 'Готово'); refresh(true);
+  }
+}
+
+/* ---------- фишки за нокауты ----------
+   В клубе выбившему дают фишку. Кто кого выбил, система не отслеживает —
+   в конце вечера кассир считает фишки и вписывает число.                   */
+async function chipsSheet(){
+  for (;;) {
+    const list = (STATE.players || []).filter(p => !p.house);
+    if (!list.length) { toast('В турнире пока никого'); return; }
+    const per = STATE.chip_points || 10;
+    const total = list.reduce((a, p) => a + (p.chips || 0), 0);
+
+    const act = await menu('Фишки за нокауты',
+      'Одна фишка — ' + per + ' очков сезона. Всего роздано: ' + total + '. ' +
+      'Нажмите игрока и впишите, сколько фишек он принёс.',
+      list.map(p => ({
+        id: 'c:' + p.id,
+        label: p.name + ' · ' + (p.chips ? p.chips + ' ' + word(p.chips, 'фишка', 'фишки', 'фишек') +
+                                           ' · ' + p.chips * per + ' очков'
+                                        : 'нет фишек'),
+        cls: p.chips ? 'up-btn--gold mi' : 'mi'
+      })));
+    if (!act) { refresh(true); return; }
+    const p = list.find(x => x.id === +act.slice(2));
+    if (!p) continue;
+    const v = await ask('Фишки · ' + p.name,
+      'Сколько фишек за нокауты он сдал. Одна фишка — ' + per + ' очков.',
+      String(p.chips || 0), 'number');
+    if (v === null) continue;
+    const r = await post('/chips', { player_id: p.id, n: +v });
+    toast(r.message || 'Готово');
+    await refresh(true);
   }
 }
 
@@ -1409,8 +1468,11 @@ async function addPlayer(start){
 
 $('btnMore').onclick = async () => {
   const t = (STATE && STATE.tournament) || {};
+  // «Фишки за нокауты» показываем только там, где формат их считает
+  const extra = t.ko ? [{ id:'chips', label:'Фишки за нокауты', cls:'up-btn--gold mi' }] : [];
   const act = await menu('Ещё',
-    t.title ? t.title + ' · ' + (t.date || '') + ' ' + (t.time || '') : 'Сервер не отвечает', [
+    t.title ? t.title + ' · ' + (t.date || '') + ' ' + (t.time || '') : 'Сервер не отвечает',
+    extra.concat([
       { id:'help',   label:'Справка по кассе', cls:'up-btn--gold mi' },
       { id:'afisha', label:'Афиша клуба', cls:'mi' },
       { id:'seatm',  label:'Режим рассадки', cls:'mi' },
@@ -1421,8 +1483,9 @@ $('btnMore').onclick = async () => {
       { id:'backup', label:'Сделать копию базы', cls:'mi' },
       { id:'key',    label:'Ключ доступа', cls:'mi' },
       { id:'finish', label:'Завершить турнир', cls:'mi danger' }
-    ]);
+    ]));
   if (act === 'help') { helpSheet(); return; }
+  if (act === 'chips') { await chipsSheet(); return; }
   if (act === 'sched') { await schedSheet(); return; }
   if (act === 'mail') { await mailSheet(); return; }
   if (act === 'people') { await peopleSheet(); return; }

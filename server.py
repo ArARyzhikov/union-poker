@@ -101,6 +101,7 @@ DEFAULT_CFG = {
     # очки за место: сколько получает 1-е, 2-е, 3-е и так далее
     "points": [100, 85, 72, 61, 52, 44, 38, 32, 27],
     "points_rest": 10,                     # всем остальным, кто играл
+    "chip_points": 10,                     # очки сезона за одну фишку за нокаут
     "seats_per_table": 9,
     "final_at": 9,                         # при скольких игроках финальный стол
 
@@ -441,6 +442,9 @@ def init_db():
     # Управляющий, которого посадили добить стол. Сидит и играет, но в счёт
     # не идёт: ни в рейтинг, ни в места, ни в сбор финального стола.
     add_column("entries", "house", "INTEGER DEFAULT 0")
+    # Фишки за нокауты. В клубе выбившему дают фишку, в конце вечера их считают
+    # и превращают в очки сезона. Кто кого выбил, система не отслеживает.
+    add_column("entries", "chips", "INTEGER DEFAULT 0")
     add_column("entries", "table_no", "INTEGER DEFAULT 0")
     add_column("entries", "seat_no", "INTEGER DEFAULT 0")
     # Для согласия на обработку данных нужно настоящее имя: ник «lamer» под
@@ -629,6 +633,53 @@ def schedule_view():
             "time": base_time, "days": days}
 
 
+def sync_auto():
+    """Приводит афишу в соответствие с расписанием.
+
+    Турниры, созданные расписанием, должны выглядеть так, как сказано в
+    настройках: название, формат, условия. Время двигаем только там, где ещё
+    никто не записан — иначе выдернем людей из-под ног. Турниры, заведённые
+    руками, не трогаем вовсе: это осознанные исключения.
+    """
+    sch = CFG.get("schedule") or {}
+    if not sch.get("on"):
+        return []
+    slots = {}
+    for d in sch.get("days", []):
+        if isinstance(d, dict) and d.get("day"):
+            slots[str(d["day"]).lower()[:2]] = d
+    gone = []
+    for r in q("SELECT * FROM tournaments WHERE status='open' AND COALESCE(auto,0)=1"):
+        dt = parse_dt(r["start"])
+        if not dt or dt < now():
+            continue
+        wd = WD_SHORT[dt.weekday()]
+        busy = q("SELECT 1 FROM entries WHERE tid=?", (r["id"],), one=True)
+        slot = slots.get(wd)
+
+        if not slot:
+            if not busy:            # день выключили — пустой турнир убираем
+                x("DELETE FROM tournaments WHERE id=?", (r["id"],))
+                gone.append(r["date"])
+            continue
+
+        title = clean_title(slot.get("title")) or CFG["tournament"]["title"]
+        theme = str(slot.get("theme") or "")
+        if r["title"] != title or (r["theme"] or "") != theme:
+            x("UPDATE tournaments SET title=?, theme=? WHERE id=?", (title, theme, r["id"]))
+            apply_format(r["id"])
+        hh, _, mm = (slot.get("time") or "").partition(":")
+        if hh.isdigit() and mm.isdigit():
+            moved = dt.replace(hour=int(hh), minute=int(mm))
+            if not busy and moved != dt and not q(
+                    "SELECT 1 FROM tournaments WHERE start=? AND id<>?",
+                    (moved.strftime(FMT), r["id"]), one=True):
+                x("UPDATE tournaments SET start=?, time=?, date=?, weekday=? WHERE id=?",
+                  (moved.strftime(FMT), moved.strftime("%H:%M"), date_text(moved),
+                   weekday_text(moved), r["id"]))
+    return gone
+
+
 def schedule_save(data):
     """Сохраняет расписание и перестраивает афишу.
 
@@ -665,15 +716,7 @@ def schedule_save(data):
         keep.sort(key=lambda d: WD_SHORT.index(d["day"]))
         sch["days"] = keep
 
-        # убираем будущие пустые турниры в днях, которые выключили
-        for r in q("SELECT * FROM tournaments WHERE status='open' AND COALESCE(auto,0)=1"):
-            dt = parse_dt(r["start"])
-            if not dt or dt < now() or WD_SHORT[dt.weekday()] in on_days:
-                continue
-            if q("SELECT 1 FROM entries WHERE tid=?", (r["id"],), one=True):
-                continue
-            x("DELETE FROM tournaments WHERE id=?", (r["id"],))
-            gone.append(f"{r['date']}")
+        gone = sync_auto()
 
     save_cfg()
     made = ensure_events()
@@ -972,8 +1015,10 @@ FORMATS = [
               "для вас закончен. Поздняя регистрация открыта до перерыва.",
      "reentry": 0, "addon": 0},
     {"id": "bounty", "name": "Bounty", "hint": "награда за выбитого",
-     "about": "За каждого выбитого соперника — награда клуба. Условия объявляет "
-              "администратор перед стартом. Ребаи и аддон как обычно."},
+     "about": "За каждого выбитого соперника — фишка. В конце вечера фишки "
+              "считают и превращают в очки сезона: одна фишка — десять очков. "
+              "Ребаи и аддон как обычно.",
+     "ko": True},
     {"id": "deepstack", "name": "Deepstack", "hint": "глубокие стеки",
      "about": "Стартовый стек вдвое больше обычного — 50 000 фишек. Уровни те же, "
               "игры заметно больше.",
@@ -983,8 +1028,9 @@ FORMATS = [
               "заканчивается раньше.",
      "level_min": 7},
     {"id": "mystery", "name": "Mystery Bounty", "hint": "награда вслепую",
-     "about": "Как Bounty, но что достанется за выбитого — известно только после. "
-              "Условия объявляет администратор перед стартом."},
+     "about": "Как Bounty: за выбитого дают фишку. Сколько очков принесёт каждая — "
+              "объявляет администратор в конце вечера.",
+     "ko": True},
     {"id": "main", "name": "Main Event", "hint": "главный турнир",
      "about": "Главный турнир клуба. Стек 40 000, уровни по 15 минут — играем долго "
               "и всерьёз.",
@@ -1026,6 +1072,40 @@ def create_tournament(dt, title=None, seats=None, buyin=None, meta=None, auto=0,
     apply_format(nid)
     log(admin, f"создан турнир #{nid} на {key}")
     return nid
+
+
+def chip_board(t_id):
+    """У кого сколько фишек за нокауты в этом турнире."""
+    rows = q("""SELECT p.id, p.name, e.chips AS n
+                FROM entries e JOIN players p ON p.id = e.player_id
+                WHERE e.tid=? AND COALESCE(e.chips,0) > 0 AND COALESCE(e.house,0)=0
+                ORDER BY e.chips DESC, p.name""", (t_id,))
+    return [{"id": r["id"], "name": r["name"], "n": r["n"]} for r in rows]
+
+
+def chips_total(t_id):
+    return q("SELECT COALESCE(SUM(chips),0) AS n FROM entries WHERE tid=?",
+             (t_id,), one=True)["n"]
+
+
+def chip_set(player_id, n, admin=None):
+    """Сколько фишек за нокауты у игрока. Считает кассир в конце вечера."""
+    t_id = tid()
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return False, "Впишите число"
+    if not 0 <= n <= 99:
+        return False, "Фишек должно быть от 0 до 99"
+    e = q("SELECT * FROM entries WHERE tid=? AND player_id=?", (t_id, player_id), one=True)
+    if not e:
+        return False, "Игрок не в этом турнире"
+    x("UPDATE entries SET chips=? WHERE id=?", (n, e["id"]))
+    p = q("SELECT name FROM players WHERE id=?", (player_id,), one=True)
+    log(admin, f"фишки за нокауты: игрок {player_id} — {n}")
+    pts = n * int(CFG.get("chip_points", 10))
+    return True, (f"{p['name'] if p else 'Игрок'}: {n} "
+                  f"{plural(n, 'фишка', 'фишки', 'фишек')} · {pts} очков")
 
 
 def apply_format(t_id):
@@ -1089,6 +1169,9 @@ def ensure_events(quiet=True):
                 continue
             made.append(create_tournament(day, title=slot.get("title"), auto=1,
                                           theme=slot.get("theme")))
+
+    # приводим уже стоящие турниры к тому, что сказано в расписании
+    sync_auto()
 
     if made and not quiet:
         print(f"Афиша достроена: новых турниров {len(made)}")
@@ -1322,7 +1405,7 @@ def t_info(row):
                 "tag": tag_text(dt), "when": when_text(dt), "status": "open",
                 "buyin": base["buyin"], "reentry": base["reentry"], "addon": base["addon"],
                 "stack": base["stack"], "seats": base["seats"], "meta": base["meta"],
-                "theme": "", "about": "", "format": {},
+                "theme": "", "about": "", "format": {}, "ko": 0, "chips": [],
                 "level_min": CFG.get("level_minutes", 10),
                 "taken": 0, "free": base["seats"], "waiting": 0,
                 "starts_in": 0, "reg_open": False, "can_cancel": False, "late": False,
@@ -1353,6 +1436,10 @@ def t_info(row):
         "about": row["about"] or "",
         # описание формата — его показываем, если клуб не написал свой текст
         "format": FORMAT_BY_ID.get(ALIAS_THEME.get(row["theme"] or "", row["theme"] or ""), {}),
+        # формат считает нокауты — касса покажет «Фишки за нокауты»
+        "ko": int(bool(FORMAT_BY_ID.get(
+            ALIAS_THEME.get(row["theme"] or "", row["theme"] or ""), {}).get("ko"))),
+        "chips": chip_board(row["id"]) if row["status"] != "open" else [],
         "level_min": row["level_min"] or CFG.get("level_minutes", 10),
         "theme": row["theme"] or "",
         "taken": tk,
@@ -1904,13 +1991,16 @@ def plural(n, one, few, many):
 
 
 def award_points(t_id):
-    """Начисляет очки сезона по занятым местам."""
+    """Начисляет очки сезона: за место плюс за выбитых, если формат это считает."""
     pts = CFG["points"]
+    per_chip = int(CFG.get("chip_points", 10))
     n = 0
     for e in q("SELECT * FROM entries WHERE tid=? AND arrived=1 AND COALESCE(house,0)=0",
                (t_id,)):
         place = e["place"] or 0
         p = pts[place - 1] if 0 < place <= len(pts) else CFG["points_rest"]
+        # фишки за нокауты — их считает кассир в конце вечера
+        p += per_chip * int(e["chips"] or 0)
         x("UPDATE entries SET points=? WHERE id=?", (p, e["id"]))
         n += 1
     return n
@@ -2665,6 +2755,7 @@ class Handler(BaseHTTPRequestHandler):
             rows = q("""SELECT p.id, p.name, p.number, p.tg_id, p.fio, p.born, p.id_ok,
                                e.arrived, e.busted, e.place,
                                e.wait, e.table_no, e.seat_no, COALESCE(e.house,0) AS house,
+                               COALESCE(e.chips,0) AS chips,
                                (SELECT COUNT(*) FROM purchases s
                                  WHERE s.tid=e.tid AND s.player_id=p.id AND s.kind='reentry') AS reentry,
                                (SELECT COUNT(*) FROM purchases s
@@ -2678,6 +2769,7 @@ class Handler(BaseHTTPRequestHandler):
                 d = dict(r)
                 tg = d.pop("tg_id", None)
                 d["docs"] = 0 if docs_pending(tg) else 1
+                d["chips"] = d.get("chips") or 0
                 d["id_ok"] = d.get("id_ok") or ""
                 d["fio"] = d.get("fio") or ""
                 plist.append(d)
@@ -2690,6 +2782,7 @@ class Handler(BaseHTTPRequestHandler):
                 "seatmap": seat_map(),
                 "final": final_table(),
                 "final_at": final_at(),
+                "chips": chip_board(tid()), "chip_points": int(CFG.get("chip_points", 10)),
                 "money": {r["kind"]: {"n": r["n"], "sum": r["sum"]} for r in money},
                 "total": sum(r["sum"] for r in money),
                 "late_minutes": late_minutes()
@@ -3171,6 +3264,10 @@ class Handler(BaseHTTPRequestHandler):
                 ok, msg = remove_entry(body.get("player_id"), "admin",
                                        force=bool(body.get("force")))
                 return self.json_out({"ok": ok, "message": msg})
+
+            if path == "/api/admin/chips":
+                ok, msg = chip_set(body.get("player_id"), body.get("n"), "admin")
+                return self.json_out({"ok": ok, "message": msg, "chips": chip_board(tid())})
 
             if path == "/api/admin/unbust":
                 ok, msg = unbust(body.get("player_id"), "admin")
