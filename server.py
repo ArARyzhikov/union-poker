@@ -44,7 +44,7 @@ DEFAULT_CFG = {
     # Версия формата настроек. Когда она меняется, сервер сам обновляет
     # config.json под новый формат, сохранив ваши личные строки: токен,
     # админов, ключ кассы, адрес приложения и афишу.
-    "cfg_version": 8,
+    "cfg_version": 9,
 
     "bot_token": "",                       # токен от @BotFather
     "proxy": "",                           # если Telegram недоступен: "http://127.0.0.1:2080"
@@ -75,11 +75,20 @@ DEFAULT_CFG = {
 
     # Расписание клуба: по этим дням сервер сам достраивает афишу вперёд.
     # Поставьте "on": true, когда определитесь с постоянными днями игры.
+    # Расписание клуба. У каждого дня своё название и своя картинка на афише —
+    # чтобы неделя не выглядела одинаковой. Темы постеров: green, wine, night,
+    # violet, copper, ink и пустая строка — золотая по умолчанию.
     "schedule": {
-        "on": False,
-        "days": ["пт", "сб", "вс"],
-        "time": "20:00",
-        "weeks_ahead": 2
+        "on": True,
+        "weeks_ahead": 2,
+        "time": "19:00",
+        "days": [
+            {"day": "вс", "time": "19:00", "title": "Rebuy",      "theme": "rebuy"},
+            {"day": "пн", "time": "19:00", "title": "Freezeout",  "theme": "freezeout"},
+            {"day": "вт", "time": "19:00", "title": "Bounty",     "theme": "bounty"},
+            {"day": "ср", "time": "19:00", "title": "Deepstack",  "theme": "deepstack"},
+            {"day": "чт", "time": "19:00", "title": "Turbo",      "theme": "turbo"}
+        ]
     },
 
     # Разовые турниры, которых нет в расписании. Дата — в формате ГГГГ-ММ-ДД
@@ -159,6 +168,14 @@ def load_cfg():
         for k in keep:
             if k in cfg:
                 fresh[k] = cfg[k]
+        # Расписание клуба переехало на новый формат: у каждого дня своё
+        # название и картинка. Если в настройках ещё старый вид (дни просто
+        # строками), берём расписание из этой версии. Настроенное по-новому
+        # не трогаем никогда.
+        old_days = (cfg.get("schedule") or {}).get("days") or []
+        if not any(isinstance(d, dict) for d in old_days):
+            fresh["schedule"] = json.loads(json.dumps(DEFAULT_CFG["schedule"]))
+
         # афишу не теряем: старые события оставляем, новые из этой версии
         # добавляем, если такого дня и времени ещё нет
         old_events = list(cfg.get("events") or [])
@@ -190,6 +207,15 @@ def load_cfg():
         d.update(merged.get(key) or {})
         merged[key] = d
     return merged
+
+
+def save_cfg():
+    """Записывает настройки обратно в config.json. Пишем через временный файл,
+    чтобы при сбое не остаться с обрезанным конфигом."""
+    tmp = CFG_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(CFG, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, CFG_PATH)
 
 
 CFG = load_cfg()
@@ -430,12 +456,19 @@ def init_db():
                       ("auto", "INTEGER DEFAULT 0"),
                       # тестовый турнир: сыгран, но в рейтинг и в историю не идёт
                       ("test", "INTEGER DEFAULT 0"),
+                      # текст о мероприятии: виден в приложении и уходит в рассылку
+                      ("about", "TEXT"),
+                      # своя длина уровня: 0 — как у клуба в настройках
+                      ("level_min", "INTEGER DEFAULT 0"),
                       ("stage", "TEXT DEFAULT 'rebuy'")):
         add_column("tournaments", col, decl)
 
     fix_old_tournaments()
     if CFG_UPGRADED:
         refresh_money()
+        # цены подтянулись из настроек — вернём турнирам их форматные параметры
+        for r in q("SELECT id FROM tournaments WHERE status!='finished'"):
+            apply_format(r["id"])
     ensure_events()
 
 
@@ -501,6 +534,11 @@ def log(who, action):
     x("INSERT INTO log(who, action) VALUES(?,?)", (str(who), action))
 
 
+def clean_title(v, limit=40):
+    """Название и подпись карточки: без лишних пробелов и не длиннее разумного."""
+    return re.sub(r"\s+", " ", str(v or "").strip())[:limit]
+
+
 def clean_name(v):
     """Ник без лишних пробелов. Длину ограничиваем, иначе ломается карта столов."""
     v = re.sub(r"\s+", " ", str(v or "").strip())
@@ -563,6 +601,89 @@ def find_player(tg_id, phone=None, name=None):
         if row:
             return row
     return None
+
+
+def schedule_view():
+    """Расписание клуба семью строками — по одной на день недели."""
+    sch = CFG.get("schedule") or {}
+    base_time = sch.get("time") or CFG["tournament"].get("time") or "19:00"
+    have = {}
+    for d in sch.get("days", []):
+        if isinstance(d, dict):
+            key = str(d.get("day", "")).lower()[:2]
+            if key:
+                have[key] = d
+        else:
+            have[str(d).lower()[:2]] = {}
+    days = []
+    for wd in WD_SHORT:
+        slot = have.get(wd)
+        days.append({
+            "day": wd,
+            "on": slot is not None,
+            "time": (slot or {}).get("time") or base_time,
+            "title": (slot or {}).get("title") or CFG["tournament"]["title"],
+            "theme": (slot or {}).get("theme") or "",
+        })
+    return {"on": bool(sch.get("on")), "weeks": int(sch.get("weeks_ahead", 2)),
+            "time": base_time, "days": days}
+
+
+def schedule_save(data):
+    """Сохраняет расписание и перестраивает афишу.
+
+    Выключенный день убирает из афиши только будущие турниры, которые создало
+    само расписание и на которые никто не записан. Всё, где есть люди или что
+    заводили руками, остаётся — такое удаляют осознанно, через афишу.
+    """
+    sch = CFG.setdefault("schedule", {})
+    if "on" in data:
+        sch["on"] = bool(data["on"])
+    if "weeks" in data:
+        sch["weeks_ahead"] = max(1, min(6, int(data["weeks"] or 2)))
+
+    days = data.get("days")
+    gone = []
+    if isinstance(days, list):
+        keep = []
+        on_days = set()
+        for d in days:
+            wd = str(d.get("day", "")).lower()[:2]
+            if wd not in WD_SHORT or not d.get("on"):
+                continue
+            on_days.add(wd)
+            hhmm = str(d.get("time") or "").strip().replace(".", ":")
+            m = re.fullmatch(r"(\d{1,2}):(\d{2})", hhmm)
+            if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+                return False, f"Время для «{wd}» должно быть в виде 19:00", []
+            th = str(d.get("theme") or "").replace("up-poster--", "")
+            if th and th not in POSTERS:
+                return False, "Неизвестная картинка", []
+            keep.append({"day": wd, "time": f"{int(m.group(1)):02d}:{m.group(2)}",
+                         "title": clean_title(d.get("title")) or CFG["tournament"]["title"],
+                         "theme": th})
+        keep.sort(key=lambda d: WD_SHORT.index(d["day"]))
+        sch["days"] = keep
+
+        # убираем будущие пустые турниры в днях, которые выключили
+        for r in q("SELECT * FROM tournaments WHERE status='open' AND COALESCE(auto,0)=1"):
+            dt = parse_dt(r["start"])
+            if not dt or dt < now() or WD_SHORT[dt.weekday()] in on_days:
+                continue
+            if q("SELECT 1 FROM entries WHERE tid=?", (r["id"],), one=True):
+                continue
+            x("DELETE FROM tournaments WHERE id=?", (r["id"],))
+            gone.append(f"{r['date']}")
+
+    save_cfg()
+    made = ensure_events()
+    log("admin", f"расписание изменено: создано {len(made)}, убрано {len(gone)}")
+    parts = []
+    if made:
+        parts.append(f"добавлено {len(made)}")
+    if gone:
+        parts.append(f"убрано {len(gone)}")
+    return True, "Расписание сохранено" + (" · " + ", ".join(parts) if parts else ""), gone
 
 
 def dupe_groups():
@@ -834,7 +955,58 @@ def docs_for(tg_id, player=None):
 # АФИША: ОТКУДА БЕРУТСЯ ТУРНИРЫ
 # ----------------------------------------------------------------------------
 
-def create_tournament(dt, title=None, seats=None, buyin=None, meta=None, auto=0, admin=None):
+# Темы постеров по дням недели — чтобы даже турнир, добавленный руками,
+# не был похож на соседний в афише.
+WD_THEME = ("freezeout", "bounty", "deepstack", "turbo", "", "main", "rebuy")
+
+# Форматы турнира. Название идёт на афишу, картинка — своя у каждого.
+# Старые названия картинок (green, wine…) остаются допустимыми: турниры,
+# созданные раньше, не должны потерять вид.
+FORMATS = [
+    {"id": "rebuy", "name": "Rebuy", "hint": "ребаи до перерыва",
+     "about": "Турнир клуба в обычном виде. Кончился стек — берёте ребай и играете "
+              "дальше, сколько угодно раз. Ребаи открыты до перерыва, в перерыв "
+              "можно взять аддон на 50 000 фишек."},
+    {"id": "freezeout", "name": "Freezeout", "hint": "один вход, без ребаев",
+     "about": "Один вход, один стек. Ребаев и аддона нет: кончились фишки — турнир "
+              "для вас закончен. Поздняя регистрация открыта до перерыва.",
+     "reentry": 0, "addon": 0},
+    {"id": "bounty", "name": "Bounty", "hint": "награда за выбитого",
+     "about": "За каждого выбитого соперника — награда клуба. Условия объявляет "
+              "администратор перед стартом. Ребаи и аддон как обычно."},
+    {"id": "deepstack", "name": "Deepstack", "hint": "глубокие стеки",
+     "about": "Стартовый стек вдвое больше обычного — 50 000 фишек. Уровни те же, "
+              "игры заметно больше.",
+     "stack": 50000},
+    {"id": "turbo", "name": "Turbo", "hint": "короткие уровни",
+     "about": "Уровни по 7 минут вместо 10. Блайнды растут быстрее, турнир "
+              "заканчивается раньше.",
+     "level_min": 7},
+    {"id": "mystery", "name": "Mystery Bounty", "hint": "награда вслепую",
+     "about": "Как Bounty, но что достанется за выбитого — известно только после. "
+              "Условия объявляет администратор перед стартом."},
+    {"id": "main", "name": "Main Event", "hint": "главный турнир",
+     "about": "Главный турнир клуба. Стек 40 000, уровни по 15 минут — играем долго "
+              "и всерьёз.",
+     "stack": 40000, "level_min": 15},
+    {"id": "", "name": "Без формата", "hint": "золотая карточка", "about": ""},
+]
+FORMAT_BY_ID = {f["id"]: f for f in FORMATS}
+POSTERS = {f["id"]: f["name"] for f in FORMATS}
+# прежние названия картинок → форматы
+ALIAS_THEME = {"green": "rebuy", "wine": "bounty", "night": "freezeout",
+               "violet": "mystery", "copper": "turbo", "ink": "deepstack"}
+# прежние названия картинок — чтобы старые турниры и старый config не ломались
+POSTERS.update({"green": "Rebuy", "wine": "Bounty", "night": "Freezeout",
+                "violet": "Mystery Bounty", "copper": "Turbo", "ink": "Deepstack"})
+
+
+def day_theme(dt):
+    return WD_THEME[dt.weekday() % 7]
+
+
+def create_tournament(dt, title=None, seats=None, buyin=None, meta=None, auto=0, admin=None,
+                      theme=None):
     """Создаёт турнир на дату dt. Если турнир на это время уже есть — возвращает его."""
     base = CFG["tournament"]
     key = dt.strftime(FMT)
@@ -848,9 +1020,28 @@ def create_tournament(dt, title=None, seats=None, buyin=None, meta=None, auto=0,
              int(buyin if buyin is not None else base.get("buyin", 0)),
              int(base.get("reentry", 0)), int(base.get("addon", 0)),
              int(base.get("stack", 0)), int(seats or base.get("seats", 36)),
-             meta or base.get("meta"), base.get("theme", ""), int(auto)))
+             meta or base.get("meta"),
+             theme if theme is not None else (base.get("theme") or day_theme(dt)),
+             int(auto)))
+    apply_format(nid)
     log(admin, f"создан турнир #{nid} на {key}")
     return nid
+
+
+def apply_format(t_id):
+    """Подтягивает в турнир параметры его формата: стек, длину уровня, ребаи."""
+    row = t_row(t_id)
+    if not row:
+        return
+    th = ALIAS_THEME.get(row["theme"] or "", row["theme"] or "")
+    f = FORMAT_BY_ID.get(th)
+    if not f or not th:
+        return
+    base = CFG["tournament"]
+    x("""UPDATE tournaments SET stack=?, level_min=?, reentry=?, addon=? WHERE id=?""",
+      (int(f.get("stack", base.get("stack", 25000))), int(f.get("level_min") or 0),
+       int(f.get("reentry", base.get("reentry", 0))),
+       int(f.get("addon", base.get("addon", 0))), t_id))
 
 
 def ensure_events(quiet=True):
@@ -869,16 +1060,35 @@ def ensure_events(quiet=True):
 
     sch = CFG.get("schedule") or {}
     if sch.get("on"):
-        days = [str(d).lower()[:2] for d in sch.get("days", [])]
-        hh, mm = ((sch.get("time") or "18:00").split(":") + ["00"])[:2]
+        # день недели → как его проводим. Запись может быть просто "пт",
+        # а может быть словарём со своим временем, названием и картинкой.
+        slots = {}
+        for d in sch.get("days", []):
+            if isinstance(d, dict):
+                key = str(d.get("day", "")).lower()[:2]
+                if key:
+                    slots[key] = d
+            else:
+                slots[str(d).lower()[:2]] = {}
+        base_time = sch.get("time") or CFG["tournament"].get("time") or "19:00"
         for i in range(int(sch.get("weeks_ahead", 2)) * 7 + 1):
-            day = (now() + timedelta(days=i)).replace(hour=int(hh), minute=int(mm))
-            if WD_SHORT[day.weekday()] not in days or day < now():
+            d0 = now() + timedelta(days=i)
+            slot = slots.get(WD_SHORT[d0.weekday()])
+            if slot is None:
                 continue
-            known = q("SELECT 1 FROM tournaments WHERE start=?", (day.strftime(FMT),), one=True)
-            nid = create_tournament(day, auto=1)
-            if not known:
-                made.append(nid)
+            hh, mm = ((slot.get("time") or base_time).split(":") + ["00"])[:2]
+            day = d0.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+            if day < now():
+                continue
+            # В клубе один турнир в день. Если на этот день он уже есть —
+            # неважно, во сколько, — второй не создаём: иначе сдвинутое вручную
+            # время тут же обрастало бы дублем из расписания.
+            busy = q("SELECT 1 FROM tournaments WHERE start LIKE ?",
+                     (day.strftime("%Y-%m-%d") + "%",), one=True)
+            if busy:
+                continue
+            made.append(create_tournament(day, title=slot.get("title"), auto=1,
+                                          theme=slot.get("theme")))
 
     if made and not quiet:
         print(f"Афиша достроена: новых турниров {len(made)}")
@@ -1112,7 +1322,9 @@ def t_info(row):
                 "tag": tag_text(dt), "when": when_text(dt), "status": "open",
                 "buyin": base["buyin"], "reentry": base["reentry"], "addon": base["addon"],
                 "stack": base["stack"], "seats": base["seats"], "meta": base["meta"],
-                "theme": "", "taken": 0, "free": base["seats"], "waiting": 0,
+                "theme": "", "about": "", "format": {},
+                "level_min": CFG.get("level_minutes", 10),
+                "taken": 0, "free": base["seats"], "waiting": 0,
                 "starts_in": 0, "reg_open": False, "can_cancel": False, "late": False,
                 "stage": "rebuy", "stage_text": STAGE_TEXT["rebuy"],
                 "stage_hint": STAGE_HINT["rebuy"], "next_stage": "addon",
@@ -1138,6 +1350,10 @@ def t_info(row):
         "stack": row["stack"] or base["stack"],
         "seats": seats,
         "meta": row["meta"] or base["meta"],
+        "about": row["about"] or "",
+        # описание формата — его показываем, если клуб не написал свой текст
+        "format": FORMAT_BY_ID.get(ALIAS_THEME.get(row["theme"] or "", row["theme"] or ""), {}),
+        "level_min": row["level_min"] or CFG.get("level_minutes", 10),
         "theme": row["theme"] or "",
         "taken": tk,
         "free": max(0, seats - tk),
@@ -1512,6 +1728,8 @@ def purchase(player_id, kind, admin=None):
     if price is None:
         return False, "Неизвестная операция"
 
+    if kind == "reentry" and not price:
+        return False, "В этом турнире ребаев нет — это Freezeout"
     if kind in ("buyin", "reentry") and stage not in ("rebuy", "addon"):
         return False, "Перерыв закончен — входов, ребаев и аддонов больше нет"
     if kind == "addon":
@@ -1584,7 +1802,10 @@ def bust(player_id, admin=None):
         return False, "Игрок не за столом"
     if e["busted"]:
         return False, "Уже отмечен"
-    if stage_of(row) == "rebuy":
+    # Во Freezeout ребая нет, значит выбывание сразу окончательное и место
+    # присваивается с первого вылета — иначе итоги вечера не соберутся.
+    can_rebuy = bool(t_info(row).get("reentry")) if row else True
+    if stage_of(row) == "rebuy" and can_rebuy:
         x("UPDATE entries SET busted=1, place=0, table_no=0, seat_no=0 WHERE id=?", (e["id"],))
         log(admin, f"кончился стек у игрока {player_id}")
         return True, "Стек кончился — можно взять ребай"
@@ -1914,6 +2135,9 @@ def announce_text():
         lines.append(f"Свободно {t['free']} из {t['seats']} мест")
     else:
         lines.append("Мест нет — можно записаться в лист ожидания")
+    if t.get("about"):
+        # то, что клуб написал о мероприятии в кассе
+        lines += ["", t["about"].strip()]
     lines += ["", "Записаться — кнопкой ниже или в приложении клуба.",
               "", "<i>Не хотите такие сообщения — отправьте боту /stop</i>"]
     return "\n".join(lines)
@@ -2426,7 +2650,7 @@ class Handler(BaseHTTPRequestHandler):
                 "final_at": final_at(),
                 "tables": seating() if t["status"] == "live" else [],
                 "final": final_table(),
-                "level_minutes": CFG.get("level_minutes", 10),
+                "level_minutes": t.get("level_min") or CFG.get("level_minutes", 10),
                 "late_levels": CFG.get("late_levels", 10),
                 "structure": CFG.get("structure", []),
                 "stack": CFG["tournament"].get("stack", 0),
@@ -2474,13 +2698,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/afisha":
             if not self.admin_ok():
                 return self.json_out({"error": "Нет доступа"}, 403)
-            past = q("""SELECT id, title, date, status, COALESCE(test,0) AS test,
+            past = q("""SELECT id, title, date, status, COALESCE(theme,'') AS theme,
+                               COALESCE(test,0) AS test,
                                (SELECT COUNT(*) FROM entries e WHERE e.tid=t.id AND e.arrived=1)
                                  AS players
                         FROM tournaments t WHERE status='finished'
                         ORDER BY start DESC LIMIT 10""")
             return self.json_out({"current": tid(), "pinned": bool(setting("pin_tid")),
-                                  "items": feed(12), "past": [dict(r) for r in past]})
+                                  "items": feed(12), "past": [dict(r) for r in past],
+                                  "posters": FORMATS})
 
         if path == "/api/admin/players.json":
             if not self.admin_ok():
@@ -2488,6 +2714,13 @@ class Handler(BaseHTTPRequestHandler):
             rows = q("""SELECT p.name, p.number FROM entries e JOIN players p ON p.id=e.player_id
                         WHERE e.tid=? ORDER BY e.id""", (tid(),))
             return self.json_out([{"name": r["name"], "number": r["number"]} for r in rows])
+
+        if path == "/api/admin/schedule":
+            if not self.admin_ok():
+                return self.json_out({"error": "Нет доступа"}, 403)
+            d = schedule_view()
+            d["posters"] = FORMATS
+            return self.json_out(d)
 
         if path == "/api/admin/people":
             # Все игроки клуба — то, что обычно смотрят прямо в базе.
@@ -2773,6 +3006,96 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json_out({"ok": True,
                                       "message": f"Отправляю {total - off} участникам"})
 
+            if path == "/api/admin/schedule":
+                ok, msg, _ = schedule_save(body)
+                return self.json_out({"ok": ok, "message": msg,
+                                      "schedule": schedule_view()})
+
+            if path == "/api/admin/tournament-edit":
+                # Настройка карточки афиши: название, подпись, текст, время,
+                # цена и число мест. Меняем только то, что прислали.
+                t_id = int(body.get("tid") or 0)
+                row = t_row(t_id)
+                if not row:
+                    return self.json_out({"ok": False, "message": "Турнир не найден"})
+                if row["status"] == "finished":
+                    return self.json_out({"ok": False,
+                                          "message": "Турнир сыгран — его карточку не меняем"})
+                sets, vals = [], []
+                if "title" in body:
+                    t = clean_title(body.get("title"))
+                    if not t:
+                        return self.json_out({"ok": False, "message": "Пустое название"})
+                    sets.append("title=?"); vals.append(t)
+                if "meta" in body:
+                    # длинная подпись переносится на две строки и лезет на название
+                    sets.append("meta=?"); vals.append(clean_title(body.get("meta"), 56))
+                if "about" in body:
+                    sets.append("about=?"); vals.append(str(body.get("about") or "").strip()[:1200])
+                if "seats" in body:
+                    n = int(body.get("seats") or 0)
+                    if not 2 <= n <= 200:
+                        return self.json_out({"ok": False, "message": "Мест должно быть от 2 до 200"})
+                    sets.append("seats=?"); vals.append(n)
+                if "buyin" in body:
+                    n = int(body.get("buyin") or 0)
+                    if not 0 <= n <= 1000000:
+                        return self.json_out({"ok": False, "message": "Проверьте цену входа"})
+                    sets.append("buyin=?"); vals.append(n)
+                if "time" in body:
+                    hhmm = str(body.get("time") or "").strip().replace(".", ":")
+                    m = re.fullmatch(r"(\d{1,2}):(\d{2})", hhmm)
+                    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+                        return self.json_out({"ok": False,
+                                              "message": "Время в виде 19:00"})
+                    dt = parse_dt(row["start"])
+                    if not dt:
+                        return self.json_out({"ok": False, "message": "У турнира нет даты"})
+                    dt = dt.replace(hour=int(m.group(1)), minute=int(m.group(2)))
+                    busy = q("SELECT 1 FROM tournaments WHERE start=? AND id<>?",
+                             (dt.strftime(FMT), t_id), one=True)
+                    if busy:
+                        return self.json_out({"ok": False,
+                                              "message": "На это время уже есть турнир"})
+                    sets += ["start=?", "time=?", "date=?", "weekday=?"]
+                    vals += [dt.strftime(FMT), dt.strftime("%H:%M"), date_text(dt),
+                             weekday_text(dt)]
+                if not sets:
+                    return self.json_out({"ok": False, "message": "Нечего менять"})
+                vals.append(t_id)
+                x(f"UPDATE tournaments SET {', '.join(sets)} WHERE id=?", vals)
+                log("admin", f"турнир #{t_id}: карточка изменена")
+                return self.json_out({"ok": True, "message": "Сохранено",
+                                      "tournament": t_info(t_row(t_id))})
+
+            if path == "/api/admin/tournament-theme":
+                # Картинка афиши для одного турнира.
+                t_id = int(body.get("tid") or 0)
+                th = str(body.get("theme") or "").strip().replace("up-poster--", "")
+                if th and th not in POSTERS:
+                    return self.json_out({"ok": False, "message": "Неизвестная картинка"})
+                if not t_row(t_id):
+                    return self.json_out({"ok": False, "message": "Турнир не найден"})
+                th = ALIAS_THEME.get(th, th)
+                f = FORMAT_BY_ID.get(th) or {}
+                base = CFG["tournament"]
+                sets, vals = ["theme=?"], [th]
+                if body.get("title"):
+                    sets.append("title=?"); vals.append(clean_title(body.get("title")))
+                # Формат задаёт стек, длину уровня и наличие ребаев. Иначе карточка
+                # обещает одно, а в зале идёт другое.
+                if th:
+                    sets += ["stack=?", "level_min=?", "reentry=?", "addon=?"]
+                    vals += [int(f.get("stack", base.get("stack", 25000))),
+                             int(f.get("level_min") or 0),
+                             int(f.get("reentry", base.get("reentry", 0))),
+                             int(f.get("addon", base.get("addon", 0)))]
+                vals.append(t_id)
+                x(f"UPDATE tournaments SET {', '.join(sets)} WHERE id=?", vals)
+                log("admin", f"турнир #{t_id}: формат — {POSTERS.get(th) or 'без формата'}")
+                return self.json_out({"ok": True, "message": "Формат изменён",
+                                      "tournament": t_info(t_row(t_id))})
+
             if path == "/api/admin/tournament-test":
                 ok, msg = set_test(body.get("tid"), bool(body.get("on")), "admin")
                 return self.json_out({"ok": ok, "message": msg})
@@ -2859,8 +3182,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not dt:
                     return self.json_out({"ok": False,
                                           "message": "Не понял дату. Формат: 2026-10-04"})
+                th = ALIAS_THEME.get(str(body.get("theme") or ""), str(body.get("theme") or ""))
+                if th and th not in POSTERS:
+                    return self.json_out({"ok": False, "message": "Неизвестный формат"})
                 nid = create_tournament(dt, body.get("title"), body.get("seats"),
-                                        body.get("buyin"), body.get("meta"), admin="admin")
+                                        body.get("buyin"), body.get("meta"), admin="admin",
+                                        theme=th if "theme" in body else None)
                 if body.get("pin"):
                     setting("pin_tid", nid)
                 return self.json_out({"ok": True, "id": nid,

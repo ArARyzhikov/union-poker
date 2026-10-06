@@ -187,8 +187,12 @@
 .up-poster{
   position: relative; overflow: hidden; container-type: inline-size;
   aspect-ratio: 4/5; border-radius: var(--up-r-xl); color: var(--up-ink);
-  background: radial-gradient(90% 70% at 88% 10%, rgba(212,175,90,.40) 0%, transparent 60%),
-              linear-gradient(165deg, #221A09 0%, #0B0A08 64%);
+  /* Фон задаёт тема турнира через --poster-bg. Нет темы — золотая по умолчанию.
+     Через переменную, а не напрямую: тогда тот же фон можно взять и для
+     маленькой карточки в списке афиши. */
+  background: var(--poster-bg,
+              radial-gradient(90% 70% at 88% 10%, rgba(212,175,90,.40) 0%, transparent 60%),
+              linear-gradient(165deg, #221A09 0%, #0B0A08 64%));
 }
 .up-poster::before{
   content: ""; position: absolute; inset: 2.4cqw; border-radius: 5cqw;
@@ -214,9 +218,34 @@
   font: 700 3.7cqw/1.25 var(--up-font-ui); opacity: .9; }
 .up-poster--long .up-poster__title{ font-size: 9.2cqw; bottom: 16cqw; max-width: 58cqw; }
 .up-poster--xlong .up-poster__title{ font-size: 7.4cqw; bottom: 16cqw; max-width: 58cqw; }
-.up-poster--green{ background: radial-gradient(100% 80% at 82% 16%, #14704F 0%, #0B3B2C 46%, #05130E 100%); }
-.up-poster--wine{ background: radial-gradient(100% 80% at 86% 8%, rgba(226,112,120,.32), transparent 56%),
-                              linear-gradient(160deg, #4A1322 0%, #1B0810 70%, #0B0508 100%); }
+/* Форматы турнира — у каждого свой цвет. Старые названия (green, wine…)
+   оставлены рядом: турниры, созданные раньше, не должны потерять вид. */
+.up-poster--rebuy{ --poster-bg: radial-gradient(100% 80% at 82% 16%, #14704F 0%, #0B3B2C 46%, #05130E 100%); }
+.up-poster--bounty{ --poster-bg: radial-gradient(100% 80% at 86% 8%, rgba(226,112,120,.34), transparent 56%),
+                                 linear-gradient(160deg, #4A1322 0%, #1B0810 70%, #0B0508 100%); }
+.up-poster--freezeout{ --poster-bg: radial-gradient(95% 75% at 84% 12%, rgba(120,170,255,.32), transparent 58%),
+                                    linear-gradient(162deg, #11203F 0%, #0A1021 62%, #05070E 100%); }
+.up-poster--mystery{ --poster-bg: radial-gradient(95% 75% at 80% 14%, rgba(176,130,255,.32), transparent 58%),
+                                  linear-gradient(158deg, #2B1A46 0%, #150D24 64%, #07050C 100%); }
+.up-poster--turbo{ --poster-bg: radial-gradient(100% 78% at 86% 10%, rgba(255,170,90,.36), transparent 56%),
+                                linear-gradient(160deg, #42230D 0%, #1C0F06 66%, #0A0603 100%); }
+.up-poster--deepstack{ --poster-bg: radial-gradient(90% 70% at 20% 90%, rgba(212,175,90,.24), transparent 60%),
+                                    linear-gradient(150deg, #23262B 0%, #121417 58%, #07080A 100%); }
+
+/* Шесть настроений афиши. Все тёмные и с золотом — клуб остаётся собой.
+   Задают только переменную, поэтому работают и на большом постере,
+   и на маленькой карточке в списке. */
+.up-poster--green{ --poster-bg: radial-gradient(100% 80% at 82% 16%, #14704F 0%, #0B3B2C 46%, #05130E 100%); }
+.up-poster--wine{ --poster-bg: radial-gradient(100% 80% at 86% 8%, rgba(226,112,120,.32), transparent 56%),
+                               linear-gradient(160deg, #4A1322 0%, #1B0810 70%, #0B0508 100%); }
+.up-poster--night{ --poster-bg: radial-gradient(95% 75% at 84% 12%, rgba(120,170,255,.30), transparent 58%),
+                                linear-gradient(162deg, #11203F 0%, #0A1021 62%, #05070E 100%); }
+.up-poster--violet{ --poster-bg: radial-gradient(95% 75% at 80% 14%, rgba(176,130,255,.30), transparent 58%),
+                                 linear-gradient(158deg, #2B1A46 0%, #150D24 64%, #07050C 100%); }
+.up-poster--copper{ --poster-bg: radial-gradient(100% 78% at 86% 10%, rgba(255,170,90,.34), transparent 56%),
+                                 linear-gradient(160deg, #42230D 0%, #1C0F06 66%, #0A0603 100%); }
+.up-poster--ink{ --poster-bg: radial-gradient(90% 70% at 20% 90%, rgba(212,175,90,.24), transparent 60%),
+                              linear-gradient(150deg, #23262B 0%, #121417 58%, #07080A 100%); }
 
 
 /* ---------- украшение постера: кольца, карты, фишки ---------- */
@@ -224,6 +253,7 @@
 .up-poster > .up-ring,
 .up-poster > .up-pk,
 .up-poster > .up-chip-art,
+.up-poster > .up-bolt,
 .up-poster > .up-suit{ position: absolute; z-index: 0; }
 
 .up-ring{
@@ -253,6 +283,14 @@
   box-shadow: 0 1.6cqw 4cqw rgba(0,0,0,.45);
 }
 .up-suit{ font: 400 1em/1 "Segoe UI Symbol", "Apple Symbols", Arial, sans-serif; }
+
+/* Молния для Turbo. Рисуем фигурой, а не знаком ⚡: тот на многих телефонах
+   показывается цветным эмодзи и выбивается из золотой палитры клуба. */
+.up-bolt{
+  background: linear-gradient(168deg, #FCEBB4 0%, #E8C56E 45%, #B98C2C 100%);
+  clip-path: polygon(64% 0%, 16% 56%, 44% 56%, 30% 100%, 84% 40%, 54% 40%);
+  filter: drop-shadow(0 1.5cqw 3cqw rgba(0,0,0,.5));
+}
 
 /* ---------- мелочи ---------- */
 .up-divider{ height: 1px; background: var(--up-line); border: 0; margin: 16px 0; }

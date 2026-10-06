@@ -70,6 +70,7 @@
   .prow b{display:block;font-size:14.5px;font-weight:800;}
   .prow small{display:block;color:var(--up-muted);font-size:12px;margin-top:2px;}
   .prow .no{color:var(--up-bad);}
+  .mi.off{opacity:.55;}
   .nodocs{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
           background:var(--up-bad-bg,rgba(224,104,122,.15));color:var(--up-bad);}
   .idok{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
@@ -193,6 +194,8 @@
   <p class="up-muted" id="sheetText" style="font-size:14px;margin:6px 0 14px"></p>
   <div id="sheetHtml" class="sheetScroll" style="display:none;margin-bottom:12px"></div>
   <div class="up-field" id="sheetField"><input class="up-input" id="sheetInput" type="text"></div>
+  <div class="up-field" id="sheetArea" style="display:none"><textarea class="up-input" id="sheetText2"
+       rows="6" style="resize:vertical;min-height:120px;line-height:1.45"></textarea></div>
   <div id="sheetMenu" class="sheetScroll" style="display:none;flex-direction:column;gap:8px;margin-bottom:12px"></div>
   <div style="display:flex;gap:10px">
     <button class="up-btn up-btn--ghost" style="flex:1" id="sheetCancel">Отмена</button>
@@ -233,22 +236,27 @@ function closeSheet(){
   $('sheetMenu').style.display = 'none'; $('sheetMenu').innerHTML = '';
   $('sheetHtml').style.display = 'none'; $('sheetHtml').innerHTML = '';
   $('sheetField').style.display = ''; $('sheetOk').style.display = '';
+  $('sheetArea').style.display = 'none';
 }
 
 function ask(title, text, value, type){
+  // type === 'area' — многострочное поле, для текста о мероприятии
+  const area = type === 'area';
   return new Promise(resolve => {
     $('sheetTitle').textContent = title;
     $('sheetText').textContent = text || '';
-    $('sheetInput').type = type || 'text';
-    $('sheetInput').value = value || '';
-    $('sheetField').style.display = value === null ? 'none' : '';
+    $('sheetInput').type = area ? 'text' : (type || 'text');
+    $('sheetInput').value = area ? '' : (value || '');
+    $('sheetText2').value = area ? (value || '') : '';
+    $('sheetField').style.display = (value === null || area) ? 'none' : '';
+    $('sheetArea').style.display = area ? '' : 'none';
     $('sheetMenu').style.display = 'none';
     $('sheetHtml').style.display = 'none';
     $('sheetOk').style.display = '';
     $('sheet').classList.add('up-sheet--open');
-    if (value !== null) setTimeout(()=>$('sheetInput').focus(), 80);
-    const done = v => { closeSheet(); resolve(v); };
-    $('sheetOk').onclick = () => done($('sheetInput').value.trim());
+    if (value !== null) setTimeout(() => (area ? $('sheetText2') : $('sheetInput')).focus(), 80);
+    const done = v => { $('sheetArea').style.display = 'none'; closeSheet(); resolve(v); };
+    $('sheetOk').onclick = () => done((area ? $('sheetText2').value : $('sheetInput').value).trim());
     $('sheetCancel').onclick = () => done(null);
   });
 }
@@ -395,7 +403,7 @@ function render(){
   $('total').textContent = fmt(STATE.total) + ' ₽';
   $('money').innerHTML =
     'входы ' + fmt((m.buyin||{}).sum) + ' ₽<br>' +
-    'ребаи ' + fmt((m.reentry||{}).sum) + ' ₽' +
+    (t.reentry ? 'ребаи ' + fmt((m.reentry||{}).sum) + ' ₽' : 'без ребаев') +
     (t.addon ? '<br>аддоны ' + fmt((m.addon||{}).sum) + ' ₽' : '');
   $('tile_ad').style.display = t.addon ? '' : 'none';
   $('tiles').className = t.addon ? 'up-grid-4' : 'up-grid-3';
@@ -468,12 +476,14 @@ function renderList(){
     if (k === 'unpaid' || k === 'wait') {
       act = btn('buyin', 'Вход · ' + fmt(t.buyin) + ' ₽', 'b-in', p.id);
     } else if (k === 'nostack') {
-      act = (st === 'rebuy' || st === 'addon')
-        ? btn('reentry', 'Ребай · ' + fmt(t.reentry) + ' ₽', 'b-gold', p.id)
-        : '<button class="up-btn" disabled style="flex:1;opacity:.5">Ребаев больше нет</button>';
+      act = !t.reentry
+        ? '<button class="up-btn" disabled style="flex:1;opacity:.5">Freezeout — ребаев нет</button>'
+        : (st === 'rebuy' || st === 'addon')
+          ? btn('reentry', 'Ребай · ' + fmt(t.reentry) + ' ₽', 'b-gold', p.id)
+          : '<button class="up-btn" disabled style="flex:1;opacity:.5">Ребаев больше нет</button>';
     } else if (k === 'play') {
       if (st === 'addon' && t.addon && !p.addon) act += btn('addon', 'Аддон · ' + fmt(t.addon) + ' ₽', 'b-in', p.id);
-      act += btn('bust', st === 'rebuy' ? 'Нет стека' : 'Выбыл', 'b-out', p.id);
+      act += btn('bust', (st === 'rebuy' && t.reentry) ? 'Нет стека' : 'Выбыл', 'b-out', p.id);
     }
 
     return '<div class="pl' + (k === 'out' ? ' out' : '') + '">' +
@@ -734,6 +744,46 @@ const HELP = `
 не хранит. Посмотрели: <b>···</b> → <b>Документ проверен, 18+</b>. В карточке
 появится зелёная метка <b>паспорт ✓</b>, и в следующий раз спрашивать не нужно.</p>
 
+<h3>Карточка турнира</h3>
+<p><b>Ещё → Афиша клуба</b> → нажать турнир → <b>Настроить карточку</b>. Там всё,
+что видит игрок: название, подпись под ним, текст о мероприятии, картинка,
+время, вход и число мест.</p>
+<p><b>О мероприятии</b> — ваш текст про этот вечер: что разыгрываем, во сколько
+сбор, что особенного. Игрок увидит его, открыв турнир в приложении, и он же
+уйдёт в рассылку, если отправите её по этому турниру. Пустое поле — текста
+просто не будет.</p>
+<p>Менять можно только турниры, которые ещё не сыграны. Если сдвинуть время,
+расписание не подставит на это место второй турнир: в клубе один турнир в день.</p>
+
+<h3>Форматы турнира</h3>
+<p>Карточка турнира называется по формату: Rebuy, Freezeout, Bounty, Deepstack,
+Turbo, Mystery Bounty, Main Event. У каждого свой цвет и свой рисунок — игрок
+узнаёт формат ещё в ленте, не открывая карточку.</p>
+<p>Выбор формата заодно переименует турнир, касса спросит об этом. В
+<b>Настройках афиши</b> формат ставится на весь день недели, в
+<b>Настроить карточку</b> — только на один вечер.</p>
+<p>Формат меняет не только вид, но и сам турнир:</p>
+<p><b>Freezeout</b> — ребаи и аддон закрыты, касса их не продаст, а выбывание
+сразу даёт место. <b>Deepstack</b> — стек 50 000. <b>Turbo</b> — уровни по
+7 минут, таймер берёт это сам. <b>Main Event</b> — стек 40 000 и уровни по
+15 минут. <b>Rebuy</b> — как обычно.</p>
+<p><b>Bounty</b> и <b>Mystery Bounty</b> — пока только название, вид и описание:
+награду за выбитых система не считает, условия объявляет администратор.</p>
+<p>Описание формата игрок видит в приложении, открыв турнир. Если вы напишете
+свой текст в «О мероприятии», он встанет под описанием формата.</p>
+
+<h3>Настройки афиши</h3>
+<p><b>Ещё → Настройки афиши</b> — расписание клуба. Семь строк, по одной на день
+недели. Нажали день: играем в него или нет, во сколько, как называется турнир и
+какая у него картинка. Там же — на сколько недель вперёд строить афишу и общий
+выключатель расписания.</p>
+<p>Турниры на эти дни создаются сами. Включили день — они появятся сразу.
+Выключили — из афиши уйдут будущие турниры этого дня, но только пустые и только
+те, что создало расписание. Где есть записавшиеся или что заводили руками,
+останется: такое убирают осознанно, через <b>Афишу клуба</b>.</p>
+<p>Расписание задаёт, каким турнир <b>родится</b>. Дальше он живёт сам: правки
+в его карточке расписание не трогает.</p>
+
 <h3>Рассылка в бот</h3>
 <p><b>Ещё</b> → <b>Рассылка в бот</b> — сообщение всем участникам клуба, у кого
 есть Telegram. Касса сначала покажет готовый текст про ближайший турнир и
@@ -878,17 +928,29 @@ async function changeStage(stage){
 }
 
 /* ---------- афиша ---------- */
-async function newTournament(){
+async function newTournament(data){
   const base = (STATE && STATE.tournament) || {};
-  const title = await ask('Новый турнир',
-    'Он появится в афише приложения, и на него сразу можно будет записаться.',
-    base.title || 'Турнир клуба');
+  const posters = (data && data.posters) || [];
+
+  // Сначала формат: он задаёт и название, и карточку, и условия турнира
+  const pick = await menu('Формат турнира',
+    'С него начинаем: формат даёт название, карточку на афише и условия игры.',
+    posters.map(x => ({ id: 'th:' + x.id,
+      label: x.name + (x.hint ? ' · ' + x.hint : ''),
+      cls: x.id === 'rebuy' ? 'up-btn--gold mi' : 'mi' })));
+  if (!pick) return;
+  const f = posters.find(x => x.id === pick.slice(3)) || {};
+
+  const title = await ask('Название турнира',
+    'По умолчанию — название формата. Можно своё, например «Кубок октября».',
+    f.name && f.id ? f.name : (base.title || 'Турнир клуба'));
   if (!title) return;
   const date = await ask('Дата турнира', 'Выберите день.', today(), 'date');
   if (!date) return;
-  const time = await ask('Время начала', 'Во сколько собираемся.', base.time || '20:00', 'time');
+  const time = await ask('Время начала', 'Во сколько собираемся.', base.time || '19:00', 'time');
   if (!time) return;
-  const r = await post('/new-tournament', { title, date, time });
+
+  const r = await post('/new-tournament', { title, date, time, theme: f.id || '' });
   toast(r.message || 'Готово');
   refresh(true);
 }
@@ -921,12 +983,13 @@ async function afishaMenu(){
     data.pinned ? 'Турнир выбран вручную. ● — тот, с которым работает касса.'
                 : 'Касса сама держит ближайший турнир. Можно выбрать другой.', items);
   if (!act) return;
-  if (act === 'new') { await newTournament(); return; }
+  if (act === 'new') { await newTournament(data); return; }
   if (act === 'auto') { const r = await post('/pin', {}); toast(r.message||'Готово'); refresh(true); return; }
   const t_id = +act.slice(1);
   const t = (data.items || []).find(x => x.id === t_id);
   const done = (data.past || []).find(x => x.id === t_id);
   const acts = [{ id:'pin', label:'Работать с этим турниром', cls:'up-btn--gold mi' }];
+  if (!done) acts.push({ id:'edit', label:'Настроить карточку', cls:'mi' });
   if (done) acts.push(done.test
     ? { id:'count', label:'Вернуть в зачёт рейтинга', cls:'mi' }
     : { id:'test',  label:'Тестовый — снять очки рейтинга', cls:'mi' });
@@ -935,6 +998,7 @@ async function afishaMenu(){
     t ? t.weekday + ', ' + t.date + ' · ' + t.time + ' · записано ' + t.taken
       : (done ? done.date + ' · сыграли ' + done.players +
                 (done.test ? ' · сейчас не идёт в рейтинг' : '') : ''), acts);
+  if (what === 'edit'){ await editCard(t_id); return; }
   if (what === 'test'){
     if (!await confirmDo('Сделать турнир тестовым?',
       'Очки сезона за него снимутся у всех, турнир пропадёт из истории в профилях ' +
@@ -954,6 +1018,204 @@ async function afishaMenu(){
       'Он исчезнет из приложения вместе со списком записавшихся.', 'Убрать')) { toast('Отменено'); return; }
     const r = await post('/delete-tournament', { tid: t_id });
     toast(r.message || 'Готово'); refresh(true);
+  }
+}
+
+/* ---------- настройки афиши ----------
+   Расписание клуба: какие дни играем, во сколько, как называется и какая
+   картинка. Турниры на эти дни создаются сами, на несколько недель вперёд.  */
+const DAY_FULL = { 'пн':'Понедельник', 'вт':'Вторник', 'ср':'Среда', 'чт':'Четверг',
+                   'пт':'Пятница', 'сб':'Суббота', 'вс':'Воскресенье' };
+
+async function schedSheet(){
+  for (;;) {
+    let d;
+    try { d = await get('/schedule'); }
+    catch (e) { toast('Нет связи с сервером'); return; }
+
+    const on = (d.days || []).filter(x => x.on);
+    const items = [
+      { id:'power', label: d.on ? 'Расписание включено — выключить' : 'Расписание выключено — включить',
+        cls: d.on ? 'mi' : 'up-btn--gold mi' },
+      { id:'weeks', label:'На сколько недель вперёд · ' + d.weeks, cls:'mi' }
+    ];
+    (d.days || []).forEach(x => items.push({
+      id: 'd:' + x.day,
+      label: DAY_FULL[x.day] + ' · ' + (x.on ? x.time + ' · ' + x.title : 'не играем'),
+      cls: x.on ? 'mi' : 'mi off'
+    }));
+
+    const act = await menu('Настройки афиши',
+      on.length ? 'Играем ' + on.length + ' ' + word(on.length, 'день', 'дня', 'дней') +
+                  ' в неделю. Нажмите день, чтобы настроить.'
+                : 'Пока не выбран ни один день.', items);
+    if (!act) { refresh(true); return; }
+
+    if (act === 'power') {
+      const r = await post('/schedule', { on: !d.on });
+      toast(r.message || 'Готово'); continue;
+    }
+    if (act === 'weeks') {
+      const v = await ask('На сколько недель вперёд',
+        'Столько недель афиши будет видно игрокам. Обычно две.', String(d.weeks), 'number');
+      if (v === null) continue;
+      const r = await post('/schedule', { weeks: +v });
+      toast(r.message || 'Готово'); continue;
+    }
+    if (act.indexOf('d:') === 0) {
+      await schedDay(act.slice(2), d);
+    }
+  }
+}
+
+async function schedDay(wd, d){
+  for (;;) {
+    const day = (d.days || []).find(x => x.day === wd);
+    if (!day) return;
+    const pName = posterName(day.theme, d.posters);
+    const act = await menu(DAY_FULL[wd],
+      day.on ? 'Играем в этот день.' : 'В этот день турнира нет.',
+      day.on ? [
+        { id:'off',   label:'Не играем в этот день', cls:'mi danger' },
+        { id:'time',  label:'Время · ' + day.time, cls:'mi' },
+        { id:'title', label:'Название · ' + day.title, cls:'mi' },
+        { id:'skin',  label:'Формат · ' + pName, cls:'mi' }
+      ] : [
+        { id:'on', label:'Играем в этот день', cls:'up-btn--gold mi' }
+      ]);
+    if (!act) return;
+
+    if (act === 'on' || act === 'off') day.on = (act === 'on');
+    if (act === 'time') {
+      const v = await ask('Время начала в ' + DAY_FULL[wd].toLowerCase(),
+        'В виде 19:00.', day.time);
+      if (v === null) continue;
+      day.time = v;
+    }
+    if (act === 'title') {
+      const v = await ask('Название турнира',
+        'Так он будет называться на афише каждую неделю.', day.title);
+      if (v === null) continue;
+      day.title = v;
+    }
+    if (act === 'skin') {
+      const now = String(day.theme || '');
+      const pick = await menu('Формат по ' + DAY_FULL[wd].toLowerCase() + 'ам',
+        'Сейчас: ' + pName + '. Выбор формата заодно переименует турниры этого дня.',
+        (d.posters || []).map(x => ({ id: 'th:' + x.id,
+          label: x.name + (x.hint ? ' · ' + x.hint : '') + (x.id === now ? '  ·  сейчас' : ''),
+          cls: x.id === now ? 'up-btn--gold mi' : 'mi' })));
+      if (!pick) continue;
+      const f = (d.posters || []).find(x => x.id === pick.slice(3)) || {};
+      day.theme = f.id;
+      if (f.id) day.title = f.name;
+    }
+
+    const r = await post('/schedule', { days: d.days });
+    toast(r.message || 'Готово');
+    if (r.schedule) d = Object.assign(d, r.schedule);
+    if (act === 'on' || act === 'off') return;
+  }
+}
+
+/* ---------- карточка турнира ----------
+   Всё, что видно игроку на афише: название, подпись, текст о мероприятии,
+   картинка, время, цена и число мест. После каждой правки список открывается
+   заново с новыми значениями — видно, что получилось.                       */
+function posterName(theme, posters){
+  const id = String(theme || '').replace('up-poster--', '');
+  return ((posters || []).find(x => x.id === id) || {}).name || 'Золотая';
+}
+
+async function editCard(t_id){
+  for (;;) {
+    let data;
+    try { data = await get('/afisha'); }
+    catch (e) { toast('Нет связи с сервером'); return; }
+    const t = (data.items || []).find(x => x.id === t_id);
+    if (!t) { toast('Турнир не найден'); return; }
+    const posters = data.posters || [];
+
+    const act = await menu('Карточка турнира',
+      t.weekday + ', ' + t.date + ' · ' + t.time + ' · записано ' + t.taken, [
+        { id:'title', label:'Название · ' + t.title, cls:'mi' },
+        { id:'meta',  label:'Подпись · ' + (t.meta || 'нет'), cls:'mi' },
+        { id:'about', label:'О мероприятии · ' + (t.about ? 'есть текст' : 'нет'), cls:'mi' },
+        { id:'skin',  label:'Формат · ' + posterName(t.theme, posters), cls:'mi' },
+        { id:'time',  label:'Время · ' + t.time, cls:'mi' },
+        { id:'buyin', label:'Вход · ' + fmt(t.buyin) + ' ₽', cls:'mi' },
+        { id:'seats', label:'Мест · ' + t.seats, cls:'mi' }
+      ]);
+    if (!act) { refresh(true); return; }
+
+    let body = null;
+
+    if (act === 'title') {
+      const v = await ask('Название турнира',
+        'Крупная надпись на карточке. Коротко — длинное название мельчает.', t.title);
+      if (v === null) continue;
+      body = { title: v };
+    }
+    if (act === 'meta') {
+      const v = await ask('Подпись под названием',
+        'Строчка мелким шрифтом внизу карточки — коротко, в одну строку. ' +
+        'Например: Hold\'em · 4 стола · вход 1500 ₽',
+        t.meta || '');
+      if (v === null) continue;
+      body = { meta: v };
+    }
+    if (act === 'about') {
+      const v = await ask('О мероприятии',
+        'Текст, который игрок увидит, открыв турнир в приложении. Он же уходит ' +
+        'в рассылку. Пустое поле — текста не будет.', t.about || '', 'area');
+      if (v === null) continue;
+      body = { about: v };
+    }
+    if (act === 'skin') {
+      const now = String(t.theme || '').replace('up-poster--', '');
+      const pick = await menu('Формат турнира',
+        'Сейчас: ' + posterName(t.theme, posters) + '. У каждого формата своя карточка.',
+        posters.map(x => ({ id: 'th:' + x.id,
+                            label: x.name + (x.hint ? ' · ' + x.hint : '') +
+                                   (x.id === now ? '  ·  сейчас' : ''),
+                            cls: x.id === now ? 'up-btn--gold mi' : 'mi' })));
+      if (!pick) continue;
+      const f = posters.find(x => x.id === pick.slice(3)) || {};
+      const body = { tid: t_id, theme: f.id };
+      if (f.id && f.name !== t.title) {
+        const rename = await menu('Назвать турнир «' + f.name + '»?',
+          'Сейчас он называется «' + t.title + '».', [
+            { id:'yes', label:'Да, назвать «' + f.name + '»', cls:'up-btn--gold mi' },
+            { id:'no',  label:'Оставить название как есть', cls:'mi' }
+          ]);
+        if (!rename) continue;
+        if (rename === 'yes') body.title = f.name;
+      }
+      const r = await post('/tournament-theme', body);
+      toast(r.message || 'Готово');
+      continue;
+    }
+    if (act === 'time') {
+      const v = await ask('Время начала', 'В виде 19:00. Дата остаётся прежней.', t.time);
+      if (v === null) continue;
+      body = { time: v };
+    }
+    if (act === 'buyin') {
+      const v = await ask('Вход, рублей', 'Только для этого турнира.', String(t.buyin), 'number');
+      if (v === null) continue;
+      body = { buyin: +v };
+    }
+    if (act === 'seats') {
+      const v = await ask('Сколько мест', 'Столы × места за столом.', String(t.seats), 'number');
+      if (v === null) continue;
+      body = { seats: +v };
+    }
+
+    if (body) {
+      body.tid = t_id;
+      const r = await post('/tournament-edit', body);
+      toast(r.message || 'Готово');
+    }
   }
 }
 
@@ -1152,6 +1414,7 @@ $('btnMore').onclick = async () => {
       { id:'help',   label:'Справка по кассе', cls:'up-btn--gold mi' },
       { id:'afisha', label:'Афиша клуба', cls:'mi' },
       { id:'seatm',  label:'Режим рассадки', cls:'mi' },
+      { id:'sched',  label:'Настройки афиши', cls:'mi' },
       { id:'mail',   label:'Рассылка в бот', cls:'mi' },
       { id:'people', label:'Игроки клуба', cls:'mi' },
       { id:'dupes',  label:'Двойные профили', cls:'mi' },
@@ -1160,6 +1423,7 @@ $('btnMore').onclick = async () => {
       { id:'finish', label:'Завершить турнир', cls:'mi danger' }
     ]);
   if (act === 'help') { helpSheet(); return; }
+  if (act === 'sched') { await schedSheet(); return; }
   if (act === 'mail') { await mailSheet(); return; }
   if (act === 'people') { await peopleSheet(); return; }
   if (act === 'dupes') { await dupesMenu(); return; }

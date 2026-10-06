@@ -145,10 +145,19 @@
   /* строка афиши в компактном виде */
   .ev{display:flex;align-items:center;gap:12px;background:var(--up-surface);border:1.5px solid var(--up-line);
       border-radius:var(--up-r-lg);padding:11px 13px;margin-bottom:8px;cursor:pointer;}
-  .ev .day{flex:none;width:46px;text-align:center;}
-  .ev .day b{display:block;font:400 22px/1 var(--up-font-display);color:var(--up-gold-text);}
-  .ev .day small{display:block;font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--up-muted);
-                 text-transform:uppercase;margin-top:3px;}
+  /* маленький постер слева — тот же фон, что у большой афиши этого турнира */
+  .ev .mini{position:relative;flex:none;width:52px;height:64px;border-radius:12px;overflow:hidden;
+            display:flex;flex-direction:column;align-items:center;justify-content:center;
+            border:1px solid rgba(212,175,90,.34);
+            background:var(--poster-bg,
+                       radial-gradient(90% 70% at 80% 12%, rgba(212,175,90,.42), transparent 60%),
+                       linear-gradient(165deg,#221A09 0%,#0B0A08 64%));}
+  .ev .mini i{position:absolute;right:-7px;bottom:-12px;font-style:normal;font-size:36px;line-height:1;
+              color:rgba(255,255,255,.11);
+              font-family:"Segoe UI Symbol","Apple Symbols",Arial,sans-serif;}
+  .ev .mini b{position:relative;font:400 21px/1 var(--up-font-display);color:#F3E3B8;}
+  .ev .mini small{position:relative;font-size:9px;font-weight:800;letter-spacing:.1em;
+                  color:rgba(243,227,184,.78);text-transform:uppercase;margin-top:3px;}
   .ev .mid{flex:1;min-width:0;}
   .ev .mid b{display:block;font-size:14.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .ev .mid small{color:var(--up-muted);font-size:12.5px;font-weight:600;}
@@ -210,6 +219,12 @@
   .plist i{width:24px;height:24px;border-radius:50%;background:var(--up-surface-2);border:1px solid var(--up-line);
            color:var(--up-gold-text);font:800 11px/22px var(--up-font-ui);text-align:center;font-style:normal;flex:none;}
   .rules li{margin-bottom:10px;}
+  .about{margin-bottom:12px;}
+  .about p{margin:0 0 9px;font-size:14.5px;line-height:1.55;color:#E3D9BD;}
+  .about p.ttl{color:var(--up-gold-text);font-size:13px;letter-spacing:.06em;
+               text-transform:uppercase;margin-bottom:6px;}
+  .about p.ttl b{font-weight:800;}
+  .about p:last-child{margin-bottom:0;}
 
   /* логотип и надпись в шапке ведут на главную */
   /* у логотипа своё золотое кольцо и фон — их не трогаем, только поведение */
@@ -520,26 +535,88 @@ function pk(rank, suit, red, style){
   return '<div class="up-pk' + (red ? ' up-pk--red' : '') + '" style="' + style + '">' +
          '<span class="r">' + rank + '</span><span class="s">' + suit + '</span></div>';
 }
+// Тема приходит коротким словом: green, wine, night, violet, copper, ink.
+// Старые записи в базе хранят полный класс — понимаем и их.
+// Турниры, созданные до форматов, хранят старые названия картинок.
+const ALIAS = { green:'rebuy', wine:'bounty', night:'freezeout',
+                violet:'mystery', copper:'turbo', ink:'deepstack' };
+function themeName(t){
+  return String(t || '').replace('up-poster--', '');
+}
+function themeClass(t){
+  const n = themeName(t);
+  return n ? 'up-poster--' + (ALIAS[n] || n) : '';
+}
 function posterArt(theme){
-  if (theme === 'up-poster--green') {
-    return '<div class="up-chip-art" style="--c:#C99A3A;--e:#F5DC93;right:8cqw;top:15cqw"></div>' +
-           '<div class="up-chip-art" style="--c:#141110;--e:#D4AF5A;right:-5cqw;top:28cqw"></div>' +
-           '<div class="up-chip-art" style="--c:#F1E7CB;--e:#141110;right:22cqw;top:33cqw"></div>';
+  const t = ALIAS[themeName(theme)] || themeName(theme);
+  const ring = (st) => '<i class="up-ring" style="' + st + '"></i>';
+  const thin = (st) => '<i class="up-ring up-ring--thin" style="' + st + '"></i>';
+  const chip = (c, e, st) => '<div class="up-chip-art" style="--c:' + c + ';--e:' + e + ';' + st + '"></div>';
+  const mark = (ch, st, col) => '<i class="up-suit" style="' + st + ';color:' + col + '">' + ch + '</i>';
+
+  // Rebuy — фишки возвращаются на стол, поэтому их много и они по кругу
+  if (t === 'rebuy') {
+    return ring('right:-22cqw;top:-6cqw;width:72cqw;height:72cqw') +
+           chip('#C99A3A', '#F5DC93', 'right:8cqw;top:14cqw') +
+           chip('#141110', '#D4AF5A', 'right:-4cqw;top:27cqw') +
+           chip('#F1E7CB', '#141110', 'right:21cqw;top:32cqw') +
+           mark('↻', 'right:6cqw;top:40cqw;font-size:22cqw', 'rgba(245,220,147,.55)');
   }
-  if (theme === 'up-poster--wine') {
-    return '<i class="up-ring" style="right:-18cqw;top:-16cqw;width:70cqw;height:70cqw"></i>' +
-           pk('7', '♦', 1, 'right:-2cqw;top:20cqw;transform:rotate(13deg)') +
-           pk('7', '♣', 0, 'right:21cqw;top:24cqw;transform:rotate(-12deg)');
+  // Freezeout — один вход: одна карта и одна стопка
+  if (t === 'freezeout') {
+    return thin('right:-12cqw;top:-10cqw;width:66cqw;height:66cqw') +
+           '<div class="up-pk up-pk--dark" style="right:4cqw;top:19cqw;transform:rotate(-7deg)">' +
+             '<span class="r">A</span><span class="s">♠</span></div>' +
+           chip('#1A2338', '#9DB8E8', 'right:26cqw;top:40cqw');
   }
-  return '<i class="up-ring" style="right:-20cqw;top:-12cqw;width:82cqw;height:82cqw"></i>' +
-         '<i class="up-ring up-ring--thin" style="right:-6cqw;top:2cqw;width:56cqw;height:56cqw"></i>' +
+  // Bounty — мишень: награда за выбитого
+  if (t === 'bounty') {
+    return ring('right:2cqw;top:13cqw;width:46cqw;height:46cqw') +
+           thin('right:11cqw;top:22cqw;width:28cqw;height:28cqw') +
+           mark('♦', 'right:21cqw;top:30cqw;font-size:12cqw', '#E86A7C') +
+           pk('K', '♥', 1, 'right:-6cqw;top:34cqw;transform:rotate(15deg)');
+  }
+  // Deepstack — высокая башня фишек
+  if (t === 'deepstack') {
+    return thin('right:-16cqw;top:-8cqw;width:64cqw;height:64cqw') +
+           chip('#2A2E34', '#D4AF5A', 'right:9cqw;top:12cqw') +
+           chip('#F1E7CB', '#2A2E34', 'right:9cqw;top:21cqw') +
+           chip('#2A2E34', '#D4AF5A', 'right:9cqw;top:30cqw') +
+           chip('#F1E7CB', '#2A2E34', 'right:9cqw;top:39cqw') +
+           chip('#2A2E34', '#D4AF5A', 'right:9cqw;top:48cqw');
+  }
+  // Turbo — молния: уровни летят
+  if (t === 'turbo') {
+    return ring('right:-20cqw;top:2cqw;width:70cqw;height:70cqw') +
+           '<i class="up-bolt" style="right:12cqw;top:13cqw;width:26cqw;height:38cqw"></i>';
+  }
+  // Mystery — что внутри, неизвестно
+  if (t === 'mystery') {
+    return thin('right:-8cqw;top:-6cqw;width:60cqw;height:60cqw') +
+           chip('#3A2659', '#D6BBFF', 'right:7cqw;top:17cqw') +
+           chip('#D6BBFF', '#3A2659', 'right:20cqw;top:28cqw') +
+           mark('?', 'right:10cqw;top:33cqw;font-size:30cqw;font-family:var(--up-font-display)',
+                'rgba(230,214,255,.75)');
+  }
+  // Main Event — корона
+  if (t === 'main') {
+    return ring('right:-20cqw;top:-12cqw;width:82cqw;height:82cqw') +
+           thin('right:-6cqw;top:2cqw;width:56cqw;height:56cqw') +
+           mark('♛', 'right:10cqw;top:16cqw;font-size:30cqw', 'rgba(252,235,180,.8)') +
+           pk('A', '♠', 0, 'right:-3cqw;top:34cqw;transform:rotate(16deg)');
+  }
+  // по умолчанию — кольца и две карты
+  return ring('right:-20cqw;top:-12cqw;width:82cqw;height:82cqw') +
+         thin('right:-6cqw;top:2cqw;width:56cqw;height:56cqw') +
          pk('A', '♠', 0, 'right:-3cqw;top:24cqw;transform:rotate(16deg)') +
          pk('K', '♥', 1, 'right:20cqw;top:19cqw;transform:rotate(-10deg)');
 }
+
+
 function poster(t, extra){
   const n = String(t.title || '').length;
   const size = n > 26 ? ' up-poster--xlong' : n > 14 ? ' up-poster--long' : '';
-  return '<div class="up-poster ' + (t.theme||'') + size + ' ' + (extra||'') + '">' +
+  return '<div class="up-poster ' + themeClass(t.theme) + size + ' ' + (extra||'') + '">' +
     posterArt(t.theme) +
     '<div class="up-poster__tag">' + esc(t.tag || (t.date + ' · ' + t.time)) + '</div>' +
     '<div class="up-poster__logo">UNION POKER</div>' +
@@ -690,11 +767,16 @@ function renderHome(){
     esc(r) + '</div></div></div>').join('');
 }
 
+const MINI_SUIT = { rebuy:'↻', freezeout:'♠', bounty:'♦', deepstack:'♣',
+                    turbo:'»', mystery:'?', main:'♛' };
+
 function evRow(t){
   const day = (t.date || '').split(' ')[0];
   const mon = (t.date || '').split(' ')[1] || '';
   return '<div class="ev" data-open="' + t.id + '">' +
-    '<div class="day"><b>' + esc(day) + '</b><small>' + esc(mon.slice(0,3)) + '</small></div>' +
+    '<div class="mini ' + themeClass(t.theme) + '"><i>' +
+      (MINI_SUIT[ALIAS[themeName(t.theme)] || themeName(t.theme)] || '♠') + '</i>' +
+      '<b>' + esc(day) + '</b><small>' + esc(mon.slice(0,3)) + '</small></div>' +
     '<div class="mid"><b>' + esc(t.title) + '</b>' +
     '<small>' + esc(t.weekday + ' · ' + t.time + ' · ' + shortSeats(t)) + '</small></div>' +
     evChip(t) + '</div>';
@@ -766,20 +848,31 @@ function eventInfo(t){
   const rows = [
     ['Когда', t.when || (t.weekday + ', ' + t.date + ' · ' + t.time)],
     ['Вход', fmt(t.buyin) + ' ₽'],
-    ['Ребай', t.reentry ? fmt(t.reentry) + ' ₽' : 'нет'],
+    ['Ребай', t.reentry ? fmt(t.reentry) + ' ₽' : 'нет — один вход'],
   ];
   if (t.addon) rows.push(['Аддон', fmt(t.addon) + ' ₽']);
   rows.push(
     ['Стартовый стек', fmt(t.stack)],
-    ['Уровень', s.minutes + ' минут'],
-    ['Вход и ребаи', 'до конца ' + s.late_levels + ' уровня'],
+    ['Уровень', (t.level_min || s.minutes) + ' минут'],
+    [t.reentry ? 'Вход и ребаи' : 'Поздняя регистрация', 'до конца ' + s.late_levels + ' уровня'],
     ['Финальный стол', 'при ' + s.final_at + ' игроках'],
     ['Мест', t.taken + ' из ' + t.seats + (t.waiting ? ' · в листе ожидания ' + t.waiting : '')]
   );
   const mine = t.table
     ? '<div class="live" style="margin-top:12px"><span class="pulse"></span><div><b>Ваше место</b>' +
       '<small>стол ' + t.table + ', место ' + t.seat + '</small></div></div>' : '';
-  return '<div class="up-card">' + rows.map(r =>
+  // Сверху — что это за формат, ниже текст клуба про конкретный вечер.
+  // Клуб ничего не написал — остаётся одно описание формата.
+  const form = t.format || {};
+  const blocks = [];
+  if (form.about) blocks.push('<b>' + esc(form.name) + '</b>', form.about);
+  if (t.about) blocks.push.apply(blocks, String(t.about).split(/\n+/).filter(Boolean));
+  const about = blocks.length
+    ? '<div class="up-card about">' + blocks.map(x =>
+        x.indexOf('<b>') === 0 ? '<p class="ttl">' + x + '</p>' : '<p>' + esc(x) + '</p>'
+      ).join('') + '</div>'
+    : '';
+  return about + '<div class="up-card">' + rows.map(r =>
     '<div style="display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--up-line)">' +
     '<span class="up-muted">' + r[0] + '</span><b style="text-align:right">' + esc(r[1]) + '</b></div>').join('') +
     '</div>' + mine;
