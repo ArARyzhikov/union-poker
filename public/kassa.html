@@ -806,8 +806,15 @@ Turbo, Mystery Bounty, Main Event. У каждого свой цвет и сво
 Выключили — из афиши уйдут будущие турниры этого дня, но только пустые и только
 те, что создало расписание. Где есть записавшиеся или что заводили руками,
 останется: такое убирают осознанно, через <b>Афишу клуба</b>.</p>
-<p>Расписание задаёт, каким турнир <b>родится</b>. Дальше он живёт сам: правки
-в его карточке расписание не трогает.</p>
+<p><b>Правка карточки выводит турнир из-под расписания.</b> Поменяли у одного
+вечера формат, название или время — он помечается в списке словом <b>свой</b> и
+дальше живёт как есть: сверка с расписанием его не трогает. Так следующая среда
+может быть Main Event, пока остальные среды остаются Rebuy.</p>
+<p>Передумали — в карточке есть <b>Вернуть по расписанию дня</b>: турнир снова
+станет таким, как настроено для этого дня недели.</p>
+<p><b>На сколько недель вперёд</b> — ноль означает «только сегодня»: лишние
+пустые турниры уйдут из афиши. Турниры, где кто-то записан, и те, что вы правили
+руками, остаются в любом случае.</p>
 
 <h3>Рассылка в бот</h3>
 <p><b>Ещё</b> → <b>Рассылка в бот</b> — сообщение всем участникам клуба, у кого
@@ -993,7 +1000,8 @@ async function afishaMenu(){
   const items = (data.items || []).map(t => ({
     id: 't' + t.id,
     label: (t.id === data.current ? '● ' : '') + short(t.date) + ', ' + t.time + ' — ' +
-           t.title + ' · ' + t.taken + '/' + t.seats + (t.status === 'live' ? ' · идёт' : ''),
+           t.title + ' · ' + t.taken + '/' + t.seats + (t.status === 'live' ? ' · идёт' : '') +
+           (t.own ? ' · свой' : ''),
     cls: 'mi' + (t.id === data.current ? ' up-btn--gold' : '')
   }));
   const shown = (data.items || []).map(t => t.id);
@@ -1096,7 +1104,8 @@ async function schedSheet(){
     const items = [
       { id:'power', label: d.on ? 'Расписание включено — выключить' : 'Расписание выключено — включить',
         cls: d.on ? 'mi' : 'up-btn--gold mi' },
-      { id:'weeks', label:'На сколько недель вперёд · ' + d.weeks, cls:'mi' }
+      { id:'weeks', label:'На сколько недель вперёд · ' +
+               (d.weeks ? d.weeks : 'только сегодня'), cls:'mi' }
     ];
     (d.days || []).forEach(x => items.push({
       id: 'd:' + x.day,
@@ -1116,7 +1125,9 @@ async function schedSheet(){
     }
     if (act === 'weeks') {
       const v = await ask('На сколько недель вперёд',
-        'Столько недель афиши будет видно игрокам. Обычно две.', String(d.weeks), 'number');
+        'Столько недель афиши видно игрокам. Обычно две. ' +
+        'Ноль — только сегодняшний день, остальные турниры из афиши уйдут.',
+        String(d.weeks), 'number');
       if (v === null) continue;
       const r = await post('/schedule', { weeks: +v });
       toast(r.message || 'Готово'); continue;
@@ -1203,11 +1214,24 @@ async function editCard(t_id){
         { id:'skin',  label:'Формат · ' + posterName(t.theme, posters), cls:'mi' },
         { id:'time',  label:'Время · ' + t.time, cls:'mi' },
         { id:'buyin', label:'Вход · ' + fmt(t.buyin) + ' ₽', cls:'mi' },
-        { id:'seats', label:'Мест · ' + t.seats, cls:'mi' }
+        { id:'seats', label:'Мест · ' + t.seats, cls:'mi' },
+        t.own ? { id:'auto', label:'Вернуть по расписанию дня', cls:'mi' }
+              : { id:'none', label:'Идёт по расписанию дня', cls:'mi off' }
       ]);
     if (!act) { refresh(true); return; }
 
     let body = null;
+
+    if (act === 'none') continue;
+    if (act === 'auto') {
+      const ok = await confirmDo('Вернуть по расписанию?',
+        'Название, формат и время станут такими, как настроено для этого дня недели. ' +
+        'Ваши правки этого турнира пропадут.', 'Вернуть');
+      if (!ok) continue;
+      const r = await post('/tournament-auto', { tid: t_id });
+      toast(r.message || 'Готово');
+      continue;
+    }
 
     if (act === 'title') {
       const v = await ask('Название турнира',

@@ -648,6 +648,8 @@ def sync_auto():
     for d in sch.get("days", []):
         if isinstance(d, dict) and d.get("day"):
             slots[str(d["day"]).lower()[:2]] = d
+    # до какого дня строим афишу: 0 недель — только сегодня
+    horizon = (now() + timedelta(days=int(sch.get("weeks_ahead", 2)) * 7)).date()
     gone = []
     for r in q("SELECT * FROM tournaments WHERE status='open' AND COALESCE(auto,0)=1"):
         dt = parse_dt(r["start"])
@@ -656,6 +658,13 @@ def sync_auto():
         wd = WD_SHORT[dt.weekday()]
         busy = q("SELECT 1 FROM entries WHERE tid=?", (r["id"],), one=True)
         slot = slots.get(wd)
+
+        if dt.date() > horizon:
+            # афишу укоротили — лишние пустые турниры убираем
+            if not busy:
+                x("DELETE FROM tournaments WHERE id=?", (r["id"],))
+                gone.append(r["date"])
+            continue
 
         if not slot:
             if not busy:            # день выключили — пустой турнир убираем
@@ -691,7 +700,13 @@ def schedule_save(data):
     if "on" in data:
         sch["on"] = bool(data["on"])
     if "weeks" in data:
-        sch["weeks_ahead"] = max(1, min(6, int(data["weeks"] or 2)))
+        # ноль — это «только сегодня», а не «значение не задано»: писать
+        # `int(x or 2)` нельзя, ноль там превращается обратно в двойку
+        try:
+            w = int(data["weeks"])
+        except (TypeError, ValueError):
+            w = int(sch.get("weeks_ahead", 2))
+        sch["weeks_ahead"] = max(0, min(6, w))
 
     days = data.get("days")
     gone = []
@@ -2798,7 +2813,9 @@ class Handler(BaseHTTPRequestHandler):
                         FROM tournaments t WHERE status='finished'
                         ORDER BY start DESC LIMIT 10""")
             return self.json_out({"current": tid(), "pinned": bool(setting("pin_tid")),
-                                  "items": feed(12), "past": [dict(r) for r in past],
+                                  "items": [dict(t, own=not t_row(t["id"])["auto"])
+                                            for t in feed(12)],
+                                  "past": [dict(r) for r in past],
                                   "posters": FORMATS})
 
         if path == "/api/admin/players.json":
@@ -3155,6 +3172,9 @@ class Handler(BaseHTTPRequestHandler):
                              weekday_text(dt)]
                 if not sets:
                     return self.json_out({"ok": False, "message": "Нечего менять"})
+                # турнир правили руками — расписание его больше не трогает,
+                # иначе следующая сверка вернёт шаблон дня
+                sets.append("auto=0")
                 vals.append(t_id)
                 x(f"UPDATE tournaments SET {', '.join(sets)} WHERE id=?", vals)
                 log("admin", f"турнир #{t_id}: карточка изменена")
@@ -3183,10 +3203,22 @@ class Handler(BaseHTTPRequestHandler):
                              int(f.get("level_min") or 0),
                              int(f.get("reentry", base.get("reentry", 0))),
                              int(f.get("addon", base.get("addon", 0)))]
+                sets.append("auto=0")       # дальше живёт сам, без расписания
                 vals.append(t_id)
                 x(f"UPDATE tournaments SET {', '.join(sets)} WHERE id=?", vals)
                 log("admin", f"турнир #{t_id}: формат — {POSTERS.get(th) or 'без формата'}")
                 return self.json_out({"ok": True, "message": "Формат изменён",
+                                      "tournament": t_info(t_row(t_id))})
+
+            if path == "/api/admin/tournament-auto":
+                # вернуть турнир под расписание дня
+                t_id = int(body.get("tid") or 0)
+                if not t_row(t_id):
+                    return self.json_out({"ok": False, "message": "Турнир не найден"})
+                x("UPDATE tournaments SET auto=1 WHERE id=?", (t_id,))
+                sync_auto()
+                log("admin", f"турнир #{t_id} снова по расписанию")
+                return self.json_out({"ok": True, "message": "Турнир снова по расписанию",
                                       "tournament": t_info(t_row(t_id))})
 
             if path == "/api/admin/tournament-test":
