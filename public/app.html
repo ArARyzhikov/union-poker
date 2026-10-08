@@ -178,6 +178,13 @@
   .idcard .top{display:flex;justify-content:space-between;font:400 11px var(--up-font-display);letter-spacing:.24em;color:var(--up-gold-text);position:relative;}
   .idcard .who{display:flex;align-items:center;gap:12px;margin-top:14px;position:relative;}
   .idcard .who b{display:block;font:400 19px var(--up-font-display);}
+  /* ник на карточке — он же кнопка: нажал, поправил */
+  .idcard .who b.nick{display:flex;align-items:center;gap:8px;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;}
+  .idcard .who b.nick .pen{width:15px;height:15px;flex:none;fill:none;stroke:var(--up-gold-2);
+    stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.7;transition:opacity .15s;}
+  .idcard .who b.nick:active{opacity:.75;}
+  .idcard .who b.nick:active .pen{opacity:1;}
   .idcard .who small{color:var(--up-gold-dim);font-weight:700;font-size:12px;}
   .idcard .st{position:absolute;left:16px;right:16px;bottom:14px;display:grid;grid-template-columns:repeat(4,auto);justify-content:space-between;}
   .idcard .st b{display:block;font:400 20px var(--up-font-display);color:var(--up-gold-text);}
@@ -339,7 +346,6 @@
   <section class="screen" id="sc-profile">
     <div class="up-section"><b>Профиль</b></div>
     <div class="idcard" id="idcard"></div>
-    <div id="nickBox"></div>
     <div id="dyn"></div>
     <div class="up-section"><b>Документы клуба</b></div>
     <div id="docsMine"></div>
@@ -471,6 +477,10 @@ const fmt = n => String(Math.round(n||0)).replace(/\B(?=(\d{3})+(?!\d))/g,' ');
 const plural = (n,a,b,c) => { const m = Math.abs(n)%100, k = m%10;
   return (m>10&&m<20) ? c : (k>1&&k<5) ? b : (k===1) ? a : c; };
 const initials = n => String(n||'').split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
+// карандашик возле ника. Рисуем линиями, а не значком-эмодзи: эмодзи на разных
+// телефонах цветной и чужой карточке.
+const PEN = '<svg class="pen" viewBox="0 0 24 24" aria-hidden="true">' +
+  '<path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 7.5l2 2"/></svg>';
 function toast(msg){
   const t = $('toast'); t.textContent = msg; t.classList.add('up-toast--on');
   clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('up-toast--on'), 2600);
@@ -1044,7 +1054,9 @@ function renderProfile(){
   $('idcard').innerHTML = '<div class="wm2">&#9824;</div>' +
     '<div class="top"><span>UNION POKER</span><span style="font-family:var(--up-font-ui);font-weight:800;letter-spacing:0;color:var(--up-gold-dim)">№ ' + m.number + '</span></div>' +
     '<div class="who"><div class="up-avatar up-avatar--lg">' + initials(m.name) + '</div>' +
-    '<div><b>' + esc(m.name) + '</b><small>' + (m.username ? '@' + esc(m.username) + ' · ' : '') + 'в клубе с ' + m.since + '</small></div></div>' +
+    '<div><b' + (GUEST ? '>' : ' class="nick" id="nickEdit" title="Изменить ник">') +
+      esc(m.name) + (GUEST ? '' : PEN) + '</b>' +
+      '<small>' + (m.username ? '@' + esc(m.username) + ' · ' : '') + 'в клубе с ' + m.since + '</small></div></div>' +
     '<div class="st">' +
       '<div><b>' + (m.rank === '—' ? '—' : '#' + m.rank) + '</b><small>место</small></div>' +
       '<div><b>' + fmt(m.points) + '</b><small>очков</small></div>' +
@@ -1052,12 +1064,8 @@ function renderProfile(){
         plural(m.tournaments,'турнир','турнира','турниров') + '</small></div>' +
       '<div><b>' + (m.best || '—') + '</b><small>лучшее</small></div></div>';
 
-  const nick = $('nickBox');
-  if (nick && !GUEST) {
-    nick.innerHTML = '<button class="up-btn up-btn--soft up-btn--block" id="nickGo" ' +
-      'style="margin:10px 0 2px">Изменить ник</button>';
-    $('nickGo').onclick = () => showRename();
-  }
+  const nick = $('nickEdit');
+  if (nick) nick.onclick = () => showRename();
 
   renderMyDocs();
 
