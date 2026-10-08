@@ -83,11 +83,11 @@ DEFAULT_CFG = {
         "weeks_ahead": 2,
         "time": "19:00",
         "days": [
-            {"day": "вс", "time": "19:00", "title": "Rebuy",      "theme": "rebuy"},
-            {"day": "пн", "time": "19:00", "title": "Freezeout",  "theme": "freezeout"},
-            {"day": "вт", "time": "19:00", "title": "Bounty",     "theme": "bounty"},
-            {"day": "ср", "time": "19:00", "title": "Deepstack",  "theme": "deepstack"},
-            {"day": "чт", "time": "19:00", "title": "Turbo",      "theme": "turbo"}
+            {"day": "вс", "time": "19:00", "title": "Rebuy",     "theme": "rebuy"},
+            {"day": "пн", "time": "19:00", "title": "Rebuy",     "theme": "rebuy"},
+            {"day": "вт", "time": "19:00", "title": "Bounty",    "theme": "bounty"},
+            {"day": "ср", "time": "19:00", "title": "Rebuy",     "theme": "rebuy"},
+            {"day": "чт", "time": "19:00", "title": "Freezeout", "theme": "freezeout"}
         ]
     },
 
@@ -468,6 +468,10 @@ def init_db():
         add_column("tournaments", col, decl)
 
     fix_old_tournaments()
+    # Приводим несыгранные турниры к клубным условиям: стек и длина уровня у
+    # всех одинаковые. Заодно чинит турниры, созданные со снятыми форматами.
+    for r in q("SELECT id FROM tournaments WHERE status!='finished'"):
+        apply_format(r["id"])
     if CFG_UPGRADED:
         refresh_money()
         # цены подтянулись из настроек — вернём турнирам их форматные параметры
@@ -553,6 +557,31 @@ def real_name(v):
     """Ник годится любой, лишь бы он был: две буквы и больше."""
     v = clean_name(v)
     return len(v) >= 2 and any(c.isalpha() for c in v)
+
+
+def rename_player(player_id, name, by="игрок"):
+    """Меняет ник. Ник в клубе один на человека, поэтому проверяем занятость.
+
+    Ник хранится в одном месте — в профиле. Списки участников, рассадка,
+    рейтинг и история берут его оттуда, так что менять больше нигде не нужно:
+    новое имя появляется сразу везде, включая уже сыгранные турниры.
+    """
+    p = q("SELECT * FROM players WHERE id=?", (int(player_id or 0),), one=True)
+    if not p:
+        return False, "Игрок не найден", None
+    name = clean_name(name)
+    if not real_name(name):
+        return False, "Впишите ник — хотя бы две буквы", None
+    if name == p["name"]:
+        return True, "Ник и так такой", p
+    busy = name_owner(name, not_id=p["id"])
+    if busy:
+        return False, (f"Ник «{name}» уже занят. Придумайте другой — "
+                       "например, добавьте первую букву фамилии."), None
+    x("UPDATE players SET name=? WHERE id=?", (name, p["id"]))
+    log(by, f"ник №{p['number']}: «{p['name']}» → «{name}»")
+    msg = f"Теперь вы {name}" if by == "игрок" else f"Теперь это {name}"
+    return True, msg, q("SELECT * FROM players WHERE id=?", (p["id"],), one=True)
 
 
 def name_owner(name, not_id=None):
@@ -1015,48 +1044,37 @@ def docs_for(tg_id, player=None):
 
 # Темы постеров по дням недели — чтобы даже турнир, добавленный руками,
 # не был похож на соседний в афише.
-WD_THEME = ("freezeout", "bounty", "deepstack", "turbo", "", "main", "rebuy")
+WD_THEME = ("rebuy", "bounty", "rebuy", "freezeout", "", "rebuy", "rebuy")
 
 # Форматы турнира. Название идёт на афишу, картинка — своя у каждого.
 # Старые названия картинок (green, wine…) остаются допустимыми: турниры,
 # созданные раньше, не должны потерять вид.
+# Форматы турнира — те, что клуб реально проводит. Стек и длина уровня у всех
+# одинаковые, клубные: формат на них не влияет. Отличается только Freezeout —
+# там нет ребаев и аддона, и Bounty — там считают фишки за нокауты.
 FORMATS = [
     {"id": "rebuy", "name": "Rebuy", "hint": "ребаи до перерыва",
      "about": "Турнир клуба в обычном виде. Кончился стек — берёте ребай и играете "
               "дальше, сколько угодно раз. Ребаи открыты до перерыва, в перерыв "
-              "можно взять аддон на 50 000 фишек."},
+              "можно взять аддон."},
     {"id": "freezeout", "name": "Freezeout", "hint": "один вход, без ребаев",
      "about": "Один вход, один стек. Ребаев и аддона нет: кончились фишки — турнир "
               "для вас закончен. Поздняя регистрация открыта до перерыва.",
      "reentry": 0, "addon": 0},
-    {"id": "bounty", "name": "Bounty", "hint": "награда за выбитого",
+    {"id": "bounty", "name": "Bounty", "hint": "фишка за выбитого",
      "about": "За каждого выбитого соперника — фишка. В конце вечера фишки "
-              "считают и превращают в очки сезона: одна фишка — десять очков. "
-              "Ребаи и аддон как обычно.",
+              "считают и превращают в очки сезона. Ребаи и аддон как обычно.",
      "ko": True},
-    {"id": "deepstack", "name": "Deepstack", "hint": "глубокие стеки",
-     "about": "Стартовый стек вдвое больше обычного — 50 000 фишек. Уровни те же, "
-              "игры заметно больше.",
-     "stack": 50000},
-    {"id": "turbo", "name": "Turbo", "hint": "короткие уровни",
-     "about": "Уровни по 7 минут вместо 10. Блайнды растут быстрее, турнир "
-              "заканчивается раньше.",
-     "level_min": 7},
-    {"id": "mystery", "name": "Mystery Bounty", "hint": "награда вслепую",
-     "about": "Как Bounty: за выбитого дают фишку. Сколько очков принесёт каждая — "
-              "объявляет администратор в конце вечера.",
-     "ko": True},
-    {"id": "main", "name": "Main Event", "hint": "главный турнир",
-     "about": "Главный турнир клуба. Стек 40 000, уровни по 15 минут — играем долго "
-              "и всерьёз.",
-     "stack": 40000, "level_min": 15},
     {"id": "", "name": "Без формата", "hint": "золотая карточка", "about": ""},
 ]
 FORMAT_BY_ID = {f["id"]: f for f in FORMATS}
 POSTERS = {f["id"]: f["name"] for f in FORMATS}
 # прежние названия картинок → форматы
 ALIAS_THEME = {"green": "rebuy", "wine": "bounty", "night": "freezeout",
-               "violet": "mystery", "copper": "turbo", "ink": "deepstack"}
+               # форматы, которых у клуба нет: показываем их как ближайший свой
+               "violet": "bounty", "copper": "rebuy", "ink": "rebuy",
+               "mystery": "bounty", "turbo": "rebuy", "deepstack": "rebuy",
+               "main": "rebuy"}
 # прежние названия картинок — чтобы старые турниры и старый config не ломались
 POSTERS.update({"green": "Rebuy", "wine": "Bounty", "night": "Freezeout",
                 "violet": "Mystery Bounty", "copper": "Turbo", "ink": "Deepstack"})
@@ -1124,17 +1142,19 @@ def chip_set(player_id, n, admin=None):
 
 
 def apply_format(t_id):
-    """Подтягивает в турнир параметры его формата: стек, длину уровня, ребаи."""
+    """Подтягивает в турнир условия его формата.
+
+    Стек и длина уровня у всех турниров клубные — формат их не меняет.
+    Отличие одно: во Freezeout нет ребаев и аддона.
+    """
     row = t_row(t_id)
     if not row:
         return
     th = ALIAS_THEME.get(row["theme"] or "", row["theme"] or "")
-    f = FORMAT_BY_ID.get(th)
-    if not f or not th:
-        return
+    f = FORMAT_BY_ID.get(th) or {}
     base = CFG["tournament"]
-    x("""UPDATE tournaments SET stack=?, level_min=?, reentry=?, addon=? WHERE id=?""",
-      (int(f.get("stack", base.get("stack", 25000))), int(f.get("level_min") or 0),
+    x("UPDATE tournaments SET theme=?, stack=?, level_min=0, reentry=?, addon=? WHERE id=?",
+      (th, int(base.get("stack", 25000)),
        int(f.get("reentry", base.get("reentry", 0))),
        int(f.get("addon", base.get("addon", 0))), t_id))
 
@@ -1309,7 +1329,6 @@ def check_final(admin=None):
     x("DELETE FROM entries WHERE tid=? AND COALESCE(house,0)=1", (row["id"],))
     rebalance(admin)   # финальный стол — всегда один, даже при ручной рассадке
     log("сервер", f"турнир #{row['id']}: собран финальный стол")
-    notify_players(row["id"], "Собран финальный стол. Удачи!")
     return True
 
 
@@ -1365,25 +1384,23 @@ def set_stage(stage, admin=None):
         return False, "Эта стадия уже идёт"
     x("UPDATE tournaments SET stage=?, status='live' WHERE id=?", (stage, row["id"]))
     log(admin, f"турнир #{row['id']}: стадия {stage}")
-    if stage == "addon":
-        price = row["addon"] or CFG["tournament"]["addon"]
-        notify_players(row["id"],
-                       "Ребай-период закончен. Перерыв — аддон "
-                       f"{price} ₽, один раз каждому. Дальше финальная стадия.")
+    # В бот о стадиях не пишем: в зале объявляет дилер, и на экране всё видно.
     if stage == "play":
         # В ручном режиме рассадка ваша — не трогаем. В автоматическом
         # собираем столы поровну: новых входов дальше не будет.
         if auto_seat_on():
             rebalance(admin)
-        notify_players(row["id"], "Аддон-тайм закончен, покупок больше нет. "
-                                  f"Финальный стол соберётся при {final_at()} игроках.")
         if check_final(admin):
             return True, "Стадия: " + STAGE_TEXT["final"]
     return True, "Стадия: " + STAGE_TEXT[stage]
 
 
 def notify_players(t_id, text):
-    """Сообщение всем, кто сейчас за столом."""
+    """Сообщение всем, кто сейчас за столом.
+
+    Сейчас не вызывается: клуб попросил не писать игрокам о ходе турнира.
+    Оставлено на случай, если понадобится разовое объявление в зал.
+    """
     if not CFG.get("bot_token"):
         return
     for r in q("""SELECT p.tg_id FROM entries e JOIN players p ON p.id=e.player_id
@@ -1498,6 +1515,23 @@ def t_status(t_id=None):
 
 def taken(t_id=None):
     return q("SELECT COUNT(*) AS c FROM entries WHERE tid=?", (t_id or tid(),), one=True)["c"]
+
+
+def avg_stack(t=None):
+    """Средний стек: все фишки, что сейчас в игре, делим на живых игроков.
+
+    Фишек столько, сколько выдали за входы, ребаи и аддоны — проигранные
+    никуда не деваются, они переезжают к соперникам.
+    """
+    t = t or current_tournament()
+    rows = q("SELECT kind, COUNT(*) AS n FROM purchases WHERE tid=? GROUP BY kind",
+             (t["id"],))
+    n = {r["kind"]: r["n"] for r in rows}
+    start = int(t.get("stack") or CFG["tournament"].get("stack", 25000))
+    big = int(CFG["tournament"].get("addon_stack", 50000))
+    chips = (n.get("buyin", 0) + n.get("reentry", 0)) * start + n.get("addon", 0) * big
+    live = alive_count(t["id"])
+    return int(chips / live) if live else 0
 
 
 def alive_count(t_id=None):
@@ -2756,6 +2790,7 @@ class Handler(BaseHTTPRequestHandler):
                 "tables": seating() if t["status"] == "live" else [],
                 "final": final_table(),
                 "level_minutes": t.get("level_min") or CFG.get("level_minutes", 10),
+                "avg_stack": avg_stack(t),
                 "late_levels": CFG.get("late_levels", 10),
                 "structure": CFG.get("structure", []),
                 "stack": CFG["tournament"].get("stack", 0),
@@ -3006,6 +3041,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.json_out({"ok": True, "message": "Документы подписаны",
                                   "pending": docs_pending(tg_id)})
 
+        if path == "/api/rename":
+            # Игрок меняет свой ник сам. Ошибиться при регистрации легко,
+            # а ходить за этим к администратору — ерунда.
+            p = self.who()
+            if not p:
+                return self.json_out({"error": "Откройте приложение из бота"}, 401)
+            ok, msg, fresh = rename_player(p["id"], body.get("name"), "игрок")
+            return self.json_out({"ok": ok, "message": msg,
+                                  "name": (fresh or p)["name"]})
+
         if path == "/api/register":
             p = self.who()
             if not p:
@@ -3059,6 +3104,12 @@ class Handler(BaseHTTPRequestHandler):
                 x("INSERT OR IGNORE INTO entries(tid, player_id) VALUES(?,?)", (tid(), pid))
                 log("admin", f"касса завела профиль: {name}")
                 return self.json_out({"ok": True, "message": "Добавлен", "player_id": pid})
+
+            if path == "/api/admin/rename":
+                ok, msg, fresh = rename_player(body.get("player_id"),
+                                               body.get("name"), "admin")
+                return self.json_out({"ok": ok, "message": msg,
+                                      "name": fresh["name"] if fresh else ""})
 
             if path == "/api/admin/seat":
                 n = make_seating("admin")
@@ -3197,12 +3248,9 @@ class Handler(BaseHTTPRequestHandler):
                     sets.append("title=?"); vals.append(clean_title(body.get("title")))
                 # Формат задаёт стек, длину уровня и наличие ребаев. Иначе карточка
                 # обещает одно, а в зале идёт другое.
-                if th:
-                    sets += ["stack=?", "level_min=?", "reentry=?", "addon=?"]
-                    vals += [int(f.get("stack", base.get("stack", 25000))),
-                             int(f.get("level_min") or 0),
-                             int(f.get("reentry", base.get("reentry", 0))),
-                             int(f.get("addon", base.get("addon", 0)))]
+                sets += ["reentry=?", "addon=?"]
+                vals += [int(f.get("reentry", base.get("reentry", 0))),
+                         int(f.get("addon", base.get("addon", 0)))]
                 sets.append("auto=0")       # дальше живёт сам, без расписания
                 vals.append(t_id)
                 x(f"UPDATE tournaments SET {', '.join(sets)} WHERE id=?", vals)

@@ -339,6 +339,7 @@
   <section class="screen" id="sc-profile">
     <div class="up-section"><b>Профиль</b></div>
     <div class="idcard" id="idcard"></div>
+    <div id="nickBox"></div>
     <div id="dyn"></div>
     <div class="up-section"><b>Документы клуба</b></div>
     <div id="docsMine"></div>
@@ -858,6 +859,15 @@ function eventInfo(t){
     ['Финальный стол', 'при ' + s.final_at + ' игроках'],
     ['Мест', t.taken + ' из ' + t.seats + (t.waiting ? ' · в листе ожидания ' + t.waiting : '')]
   );
+  // фишки за нокауты: их считает клуб, одна фишка — очки сезона
+  const ko = (t.chips || []).length
+    ? '<div class="up-section"><b>Фишки за нокауты</b><span class="up-chip">' +
+        (t.format && t.format.name ? esc(t.format.name) : 'Bounty') + '</span></div>' +
+      '<div class="up-card">' + t.chips.slice(0, 12).map((k, i) =>
+        '<div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0' +
+        (i ? ';border-top:1px solid var(--up-line)' : '') + '">' +
+        '<span>' + esc(k.name) + '</span><b>' + k.n + '</b></div>').join('') + '</div>'
+    : '';
   const mine = t.table
     ? '<div class="live" style="margin-top:12px"><span class="pulse"></span><div><b>Ваше место</b>' +
       '<small>стол ' + t.table + ', место ' + t.seat + '</small></div></div>' : '';
@@ -875,7 +885,7 @@ function eventInfo(t){
   return about + '<div class="up-card">' + rows.map(r =>
     '<div style="display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--up-line)">' +
     '<span class="up-muted">' + r[0] + '</span><b style="text-align:right">' + esc(r[1]) + '</b></div>').join('') +
-    '</div>' + mine;
+    '</div>' + ko + mine;
 }
 
 function eventStruct(){
@@ -1042,6 +1052,13 @@ function renderProfile(){
         plural(m.tournaments,'турнир','турнира','турниров') + '</small></div>' +
       '<div><b>' + (m.best || '—') + '</b><small>лучшее</small></div></div>';
 
+  const nick = $('nickBox');
+  if (nick && !GUEST) {
+    nick.innerHTML = '<button class="up-btn up-btn--soft up-btn--block" id="nickGo" ' +
+      'style="margin:10px 0 2px">Изменить ник</button>';
+    $('nickGo').onclick = () => showRename();
+  }
+
   renderMyDocs();
 
   const ach = m.achievements || [];
@@ -1131,7 +1148,8 @@ function showSignup(){
         'Регистрация в клубе</div>' +
       '<p class="up-muted" style="font-size:14px;line-height:1.5;margin:0 0 16px">' +
         'Один человек — один профиль. Ник выбирайте любой — под ним вас объявят ' +
-        'за столом и покажут в рейтинге. По номеру телефона мы узнаём вас ' +
+        'за столом и покажут в рейтинге; ошиблись — его можно поменять потом ' +
+        'в профиле. По номеру телефона мы узнаём вас ' +
         'на входе и ведём вашу статистику.</p>' +
       '<div class="up-field"><label class="up-label">Ник</label>' +
         '<input class="up-input" id="suName" type="text" value="' + esc(name) + '" ' +
@@ -1178,6 +1196,61 @@ function showSignup(){
         ? 'Сервер не ответил. Нажмите ещё раз — номер и ник сохранены'
         : 'Нет связи с сервером. Проверьте интернет и нажмите ещё раз');
       $('suGo').disabled = false;
+    }
+  };
+}
+
+/* ---------- смена ника ----------
+   Ник хранится один на профиль, поэтому меняется в одном месте и сразу
+   подхватывается рейтингом, афишей и кассой. Номер игрока и статистика
+   остаются прежними: профиль тот же, меняется только подпись.            */
+function showRename(){
+  shellSave();
+  const was = (DATA.me && DATA.me.name) || '';
+  document.querySelector('.up-tabbar').style.display = 'none';
+  document.querySelector('.app').innerHTML =
+    '<div class="up-header"><div class="up-logo"></div>' +
+      '<div class="up-wordmark"><b>UNION</b><small>POKER</small></div></div>' +
+    '<button class="back" id="rnBack">‹ В профиль</button>' +
+    '<div class="up-section"><b>Ник в клубе</b></div>' +
+    '<div class="up-card" style="padding:18px">' +
+      '<p class="up-muted" style="font-size:14px;line-height:1.5;margin:0 0 16px">' +
+        'Под этим ником вас объявляют за столом и показывают в рейтинге. ' +
+        'Номер игрока, очки и история турниров останутся прежними — ' +
+        'меняется только подпись.</p>' +
+      '<div class="up-field"><label class="up-label">Новый ник</label>' +
+        '<input class="up-input" id="rnName" type="text" maxlength="24" ' +
+        'value="' + esc(was) + '" placeholder="Как вас объявлять за столом"></div>' +
+      '<button class="up-btn up-btn--gold up-btn--block" id="rnGo" style="margin-top:14px">' +
+        'Сохранить</button>' +
+      '<div class="up-row__sub" id="rnHint" style="margin-top:10px;text-align:center"></div>' +
+    '</div>';
+
+  const hint = t => { const h = $('rnHint'); if (h) h.textContent = t || ''; };
+  $('rnBack').onclick = () => shellBack();
+  const field = $('rnName');
+  field.focus();
+  try { field.setSelectionRange(was.length, was.length); } catch (e) {}
+
+  $('rnGo').onclick = async () => {
+    const nm = (field.value || '').trim();
+    if (nm.length < 2) { hint('Впишите ник — хотя бы две буквы'); return; }
+    if (nm === was) { shellBack(); return; }
+    $('rnGo').disabled = true; hint('Сохраняю...');
+    try {
+      const res = await apiPost('/rename', { name: nm }, 12000);
+      if (res.ok) {
+        if (DATA.me) DATA.me.name = res.name || nm;
+        toast(res.message || 'Ник изменён');
+        shellBack();          // внутри перерисовывает приложение целиком
+        go('profile');
+      } else {
+        hint(res.message || 'Не получилось');
+        $('rnGo').disabled = false;
+      }
+    } catch (e) {
+      hint('Нет связи с сервером. Проверьте интернет и нажмите ещё раз');
+      $('rnGo').disabled = false;
     }
   };
 }
