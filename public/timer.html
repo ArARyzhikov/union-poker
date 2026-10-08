@@ -486,6 +486,7 @@ var DEF={
   seats:9,
   finalAt:9,
   reentryTo:10,
+  stack:25000,          /* стартовый стек: его показываем, пока никто не вошёл */
   fnames:'',
   afi:'',
   afoot:'Запись в телеграм-боте клуба',
@@ -725,7 +726,10 @@ function render(){
   T('pl',pl);T('plmax',ent);
   T('addon',addonState());
   // средний стек считает сервер: он знает все входы, ребаи и аддоны
-  T('avg', (typeof S.avg==='number'&&S.avg>0) ? fmt(S.avg) : '—');
+  // Пока вход никто не оплатил, средний стек равен стартовому: у всех, кто
+  // сядет, будет ровно столько. Прочерк тут выглядел бы поломкой экрана.
+  var av=(typeof S.avg==='number'&&S.avg>0)?S.avg:(S.cfg.stack|0);
+  T('avg', av>0 ? fmt(av) : '—');
   var need=pl-(S.cfg.finalAt|0);
   T('tofinal',S.final?'идёт финал':(need>0?(need+' '+plural(need,'игрок','игрока','игроков')):'—'));
   T('evname',S.cfg.name);T('evsub',S.cfg.sub);
@@ -1124,6 +1128,7 @@ function pull(){
       if(d.final_at)S.cfg.finalAt=d.final_at|0;
       if(d.late_levels)S.cfg.reentryTo=d.late_levels|0;
       if(typeof d.avg_stack==='number')S.avg=d.avg_stack;
+      if(d.stack)S.cfg.stack=d.stack|0;
 
       // Структура и длина уровня живут на сервере — он единственный источник.
       // Пока турнир идёт, не трогаем: менять длину уровня на ходу нельзя.

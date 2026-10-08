@@ -1531,7 +1531,11 @@ def avg_stack(t=None):
     big = int(CFG["tournament"].get("addon_stack", 50000))
     chips = (n.get("buyin", 0) + n.get("reentry", 0)) * start + n.get("addon", 0) * big
     live = alive_count(t["id"])
-    return int(chips / live) if live else 0
+    if live:
+        return int(chips / live)
+    # Вход ещё никто не оплатил: средний стек равен стартовому — именно столько
+    # будет у каждого, кто сядет. Прочерк на экране в это время выглядит поломкой.
+    return 0 if chips else start
 
 
 def alive_count(t_id=None):
