@@ -61,7 +61,7 @@ body.idle{cursor:none;}
 .nv em{font:600 32px var(--f-ui);color:var(--mut);font-style:normal;margin-left:22px;}
 .brk{text-align:right;}
 .bt{font:400 64px/1 var(--f-disp);color:var(--g1);margin-top:12px;}
-.st4{grid-column:1/3;display:grid;grid-template-columns:repeat(3,1fr);gap:26px;}
+.st4{grid-column:1/3;display:grid;grid-template-columns:repeat(4,1fr);gap:26px;}
 .st4 .card{padding:24px 34px;}
 .tile .v{font:400 84px/1 var(--f-disp);margin-top:16px;white-space:nowrap;}
 .tile .v.t{font-size:52px;line-height:84px;white-space:normal;}
@@ -278,6 +278,7 @@ button.warn2{color:#E0687A;margin-right:auto;}
       </div>
       <div class="st4">
         <div class="card tile"><div class="lab">Игроков в игре</div><div class="v gold"><span id="pl">0</span><em>из <span id="plmax">36</span></em></div></div>
+        <div class="card tile"><div class="lab">Средний стек</div><div class="v gold" id="avg">—</div></div>
         <div class="card tile"><div class="lab">Вход и ребаи</div><div class="v t" id="addon">—</div></div>
         <div class="card tile"><div class="lab">До финального стола</div><div class="v" id="tofinal">—</div></div>
       </div>
@@ -467,7 +468,7 @@ button.warn2{color:#E0687A;margin-right:auto;}
 <script>
 (function(){
 "use strict";
-var KEY='unionpoker.timer.v4';
+var KEY='unionpoker.timer.v5';
 var DEF={
   name:'Турнир клуба', sub:'Union Poker · спортивный покер', entries:36, len:10,
   struct:[
@@ -633,8 +634,8 @@ function addonState(){
   var lim=S.cfg.reentryTo|0;
   if(!lim)return '—';
   var cur=levelNo(S.idx);
-  if(ST[S.idx].br)return cur<lim?('до конца ур. '+lim):'закрыта';
-  return cur<=lim?('до конца ур. '+lim):'закрыта';
+  if(ST[S.idx].br)return cur<lim?('до конца ур. '+lim):'закрыты';
+  return cur<=lim?('до конца ур. '+lim):'закрыты';
 }
 function fmt(n){return String(Math.round(n||0)).replace(/\B(?=(\d{3})+(?!\d))/g,' ');}
 function two(n){return String(n).padStart(2,'0');}
@@ -723,6 +724,8 @@ function render(){
   var pl=Math.max(0,S.players|0),ent=Math.max(pl,S.cfg.entries|0);
   T('pl',pl);T('plmax',ent);
   T('addon',addonState());
+  // средний стек считает сервер: он знает все входы, ребаи и аддоны
+  T('avg', (typeof S.avg==='number'&&S.avg>0) ? fmt(S.avg) : '—');
   var need=pl-(S.cfg.finalAt|0);
   T('tofinal',S.final?'идёт финал':(need>0?(need+' '+plural(need,'игрок','игрока','игроков')):'—'));
   T('evname',S.cfg.name);T('evsub',S.cfg.sub);
@@ -1120,6 +1123,7 @@ function pull(){
       if(d.seats)S.cfg.entries=d.seats|0;
       if(d.final_at)S.cfg.finalAt=d.final_at|0;
       if(d.late_levels)S.cfg.reentryTo=d.late_levels|0;
+      if(typeof d.avg_stack==='number')S.avg=d.avg_stack;
 
       // Структура и длина уровня живут на сервере — он единственный источник.
       // Пока турнир идёт, не трогаем: менять длину уровня на ходу нельзя.
