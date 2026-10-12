@@ -453,6 +453,8 @@ def init_db():
     add_column("players", "born", "TEXT")
     # Отметка администратора: документ на входе предъявлен, человеку 18+.
     add_column("players", "id_ok", "TEXT")
+    # Кто этот человек для клуба: владелец VIP-карты, свой персонал или гость.
+    add_column("players", "tag", "TEXT")
     for col, decl in (("start", "TEXT"), ("time", "TEXT"), ("weekday", "TEXT"),
                       ("buyin", "INTEGER DEFAULT 0"), ("reentry", "INTEGER DEFAULT 0"),
                       ("addon", "INTEGER DEFAULT 0"), ("stack", "INTEGER DEFAULT 0"),
@@ -557,6 +559,39 @@ def real_name(v):
     """Ник годится любой, лишь бы он был: две буквы и больше."""
     v = clean_name(v)
     return len(v) >= 2 and any(c.isalpha() for c in v)
+
+
+# Отметки на профиле. Ничего не считают и не меняют в деньгах — это подсказка
+# кассиру и дилеру: кто перед ним. VIP — владелец карты клуба, стафф — свои.
+TAGS = {
+    "vip":   {"name": "VIP", "label": "VIP-карта клуба"},
+    "staff": {"name": "Стафф", "label": "Персонал клуба"},
+}
+
+
+def tag_of(row):
+    """Отметка профиля строкой: 'vip', 'staff' или пусто."""
+    try:
+        t = (row["tag"] or "").strip().lower()
+    except (KeyError, IndexError, TypeError):
+        t = ""
+    return t if t in TAGS else ""
+
+
+def set_tag(player_id, tag, by="admin"):
+    """Ставит или снимает отметку. Пустая строка — обычный гость."""
+    p = q("SELECT * FROM players WHERE id=?", (int(player_id or 0),), one=True)
+    if not p:
+        return False, "Игрок не найден", ""
+    tag = str(tag or "").strip().lower()
+    if tag and tag not in TAGS:
+        return False, "Неизвестная отметка", ""
+    if tag_of(p) == tag:
+        return True, "Отметка и так такая", tag
+    x("UPDATE players SET tag=? WHERE id=?", (tag, p["id"]))
+    word = TAGS[tag]["name"] if tag else "обычный гость"
+    log(by, f"отметка №{p['number']} {p['name']}: {word}")
+    return True, f"{p['name']} — {word}", tag
 
 
 def rename_player(player_id, name, by="игрок"):
@@ -836,10 +871,11 @@ def merge_players(keep_id, drop_id, admin=None):
     x("""UPDATE players SET tg_id=COALESCE(tg_id, ?), phone=COALESCE(phone, ?),
                             username=COALESCE(username, ?), fio=COALESCE(fio, ?),
                             born=COALESCE(born, ?), id_ok=COALESCE(id_ok, ?),
+                            tag=CASE WHEN COALESCE(tag,'')='' THEN ? ELSE tag END,
                             number=?
          WHERE id=?""",
       (drop["tg_id"], drop["phone"], drop["username"], drop["fio"], drop["born"],
-       drop["id_ok"], number, keep_id))
+       drop["id_ok"], tag_of(drop), number, keep_id))
     log(admin or "admin",
         f"профили объединены: №{drop['number']} ({drop['name']}) → №{number} ({keep['name']})")
     return True, f"Объединено в профиль №{number} · {keep['name']}"
@@ -2807,6 +2843,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self.admin_ok():
                 return self.json_out({"error": "Нет доступа"}, 403)
             rows = q("""SELECT p.id, p.name, p.number, p.tg_id, p.fio, p.born, p.id_ok,
+                               COALESCE(p.tag,'') AS tag,
                                e.arrived, e.busted, e.place,
                                e.wait, e.table_no, e.seat_no, COALESCE(e.house,0) AS house,
                                COALESCE(e.chips,0) AS chips,
@@ -2826,9 +2863,11 @@ class Handler(BaseHTTPRequestHandler):
                 d["chips"] = d.get("chips") or 0
                 d["id_ok"] = d.get("id_ok") or ""
                 d["fio"] = d.get("fio") or ""
+                d["tag"] = d.get("tag") if d.get("tag") in TAGS else ""
                 plist.append(d)
             return self.json_out({
                 "tournament": current_tournament(),
+                "tags": TAGS,
                 "pinned": bool(setting("pin_tid")),
                 "players": plist,
                 "alive": alive_count(),
@@ -2890,8 +2929,12 @@ class Handler(BaseHTTPRequestHandler):
                     "created": (r["created"] or "")[:10],
                     "games": r["games"], "pays": r["pays"], "money": r["money"],
                     "docs": 0 if docs_pending(r["tg_id"]) else 1,
+                    "tag": tag_of(r),
                 })
             return self.json_out({"players": out, "total": len(out),
+                                  "tags": TAGS,
+                                  "vip": sum(1 for p in out if p["tag"] == "vip"),
+                                  "staff": sum(1 for p in out if p["tag"] == "staff"),
                                   "groups": len(dupe_groups())})
 
         if path == "/api/admin/dupes":
@@ -3108,6 +3151,10 @@ class Handler(BaseHTTPRequestHandler):
                 x("INSERT OR IGNORE INTO entries(tid, player_id) VALUES(?,?)", (tid(), pid))
                 log("admin", f"касса завела профиль: {name}")
                 return self.json_out({"ok": True, "message": "Добавлен", "player_id": pid})
+
+            if path == "/api/admin/tag":
+                ok, msg, tag = set_tag(body.get("player_id"), body.get("tag"), "admin")
+                return self.json_out({"ok": ok, "message": msg, "tag": tag})
 
             if path == "/api/admin/rename":
                 ok, msg, fresh = rename_player(body.get("player_id"),

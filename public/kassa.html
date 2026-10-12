@@ -75,6 +75,12 @@
           background:var(--up-bad-bg,rgba(224,104,122,.15));color:var(--up-bad);}
   .idok{display:inline-block;padding:2px 8px;border-radius:9px;font-size:11.5px;font-weight:800;
         background:var(--up-ok-bg,rgba(120,200,140,.14));color:var(--up-ok);}
+  /* отметки профиля: VIP — золотом, стафф — спокойным серым, чтобы не путались */
+  .tag{display:inline-block;flex:none;padding:2px 8px;border-radius:9px;font-size:11px;
+       font-weight:800;letter-spacing:.06em;}
+  .tag--vip{background:linear-gradient(150deg,#F0DFAE,#D4AF5A);color:#1A160E;}
+  .tag--staff{background:rgba(255,255,255,.1);color:var(--up-muted);
+              border:1px solid var(--up-line);}
 
   /* ---------- карта столов ---------- */
   .tb{background:var(--up-surface);border:1.5px solid var(--up-line);border-radius:18px;
@@ -500,12 +506,37 @@ function renderList(){
     }
 
     return '<div class="pl' + (k === 'out' ? ' out' : '') + '">' +
-      '<div class="hd"><div class="nm">' + esc(p.name) + '</div>' + chip +
+      '<div class="hd"><div class="nm">' + esc(p.name) + '</div>' + tagChip(p.tag) + chip +
       '<button class="up-btn more" data-more="' + p.id + '">···</button></div>' +
       '<div class="sub">' + bits.join(' · ') + '</div>' +
       (act ? '<div class="act">' + act + '</div>' : '') +
     '</div>';
   }).join('');
+}
+
+/* ---------- отметки на профиле ----------
+   Ни на деньги, ни на рейтинг не влияют: это подсказка кассиру, кто перед ним.
+   VIP — владелец карты клуба, стафф — свои.                                  */
+const TAG_NAME = { vip:'VIP', staff:'СТАФФ' };
+
+function tagChip(tag){
+  return TAG_NAME[tag] ? '<span class="tag tag--' + tag + '">' + TAG_NAME[tag] + '</span>' : '';
+}
+
+async function tagSheet(p){
+  const cur = p.tag || '';
+  const act = await menu('Отметка профиля',
+    '№' + p.number + ' · ' + p.name + '. Отметка видна кассиру в списке игроков ' +
+    'и в карточке. На цены, рассадку и рейтинг она не влияет.', [
+      { id:'vip',   label:'VIP — карта клуба' + (cur === 'vip' ? ' ✓' : ''), cls:'mi' },
+      { id:'staff', label:'Стафф — персонал клуба' + (cur === 'staff' ? ' ✓' : ''), cls:'mi' },
+      { id:'none',  label:'Без отметки, обычный гость' + (cur === '' ? ' ✓' : ''), cls:'mi' }
+    ]);
+  if (!act) return null;
+  const r = await post('/tag', { player_id: p.id, tag: act === 'none' ? '' : act });
+  toast(r.message || 'Готово');
+  if (r.ok) { p.tag = r.tag; refresh(true); }
+  return r;
 }
 
 function btn(op, label, cls, id){
@@ -642,6 +673,7 @@ async function playerMenu(id){
   items.push({ id:'idok', label: p.id_ok ? 'Снять отметку о документе' : 'Документ проверен, 18+',
                cls:'mi' });
   items.push({ id:'nick', label:'Изменить ник', cls:'mi' });
+  items.push({ id:'tag',  label:'Отметка: ' + (TAG_NAME[p.tag] || 'обычный гость'), cls:'mi' });
   items.push({ id:'help', label:'Что значат эти кнопки', cls:'mi' });
   items.push({ id:'remove', label:'Стереть запись — ошибка кассира', cls:'mi danger' });
 
@@ -652,7 +684,8 @@ async function playerMenu(id){
   const docs = p.docs
     ? (p.fio ? ' · ' + p.fio : '') + (p.id_ok ? ' · документ проверен ' + p.id_ok : '')
     : ' · ДОКУМЕНТЫ НЕ ПОДПИСАНЫ';
-  const act = await menu(p.name, '№ ' + p.number + ' · ' + sub + docs, items);
+  const act = await menu(p.name, '№ ' + p.number + ' · ' + sub +
+    (TAG_NAME[p.tag] ? ' · ' + TAG_NAME[p.tag] : '') + docs, items);
 
   if (act === 'seat'){ VIEW = 'seats'; PICK = id; switchView(); toast('Нажмите место, куда посадить'); return; }
   if (act === 'bust'){
@@ -674,6 +707,7 @@ async function playerMenu(id){
     const r = await post('/rename', { player_id: id, name: nm });
     toast(r.message || 'Готово'); refresh(true); return;
   }
+  if (act === 'tag'){ await tagSheet(p); return; }
   if (act === 'help'){ helpSheet(); return; }
   if (act === 'remove'){
     const paid = (p.reentry||0) + (p.addon||0) + (p.arrived ? 1 : 0);
@@ -841,6 +875,17 @@ const HELP = `
 приложении возьмёт занятый — ему так и напишут, и попросят другой. Если занятый
 ник вводит кассир, касса покажет, кто его носит, и спросит: это он или другой
 человек.</p>
+
+<h3>VIP и стафф</h3>
+<p>Нажмите игрока в списке стола или найдите в <b>Ещё</b> → <b>Игроки клуба</b>
+и выберите <b>Отметка</b>: <b>VIP</b> — владелец карты клуба, <b>Стафф</b> —
+свой персонал, <b>Без отметки</b> — обычный гость.</p>
+<p>Отметка стоит на профиле, не на турнире: поставили один раз — видно каждый
+вечер. В списке игроков она идёт значком рядом с ником, чтобы кассир видел,
+кто перед ним, не открывая карточку.</p>
+<p>На деньги, рассадку и рейтинг отметка не влияет — это подсказка человеку, а
+не правило для кассы. Если нужно, чтобы у стаффа, например, не считался вход,
+скажите, сделаем отдельно.</p>
 
 <h3>Поменять ник</h3>
 <p>Игрок меняет его сам: <b>Профиль</b> → <b>Изменить ник</b>. Заводить второй
@@ -1355,11 +1400,13 @@ async function peopleSheet(){
   const html =
     '<div class="help" style="margin-bottom:10px"><p>В клубе <b>' + d.total +
     '</b> ' + word(d.total, 'игрок', 'игрока', 'игроков') +
+    (d.vip ? '. С VIP-картой: <b>' + d.vip + '</b>' : '') +
+    (d.staff ? '. Стафф: <b>' + d.staff + '</b>' : '') +
     (d.groups ? '. Похожих профилей: <b>' + d.groups + '</b> — смотрите «Двойные профили».' : '') +
     '</p></div>' +
     list.map(p =>
       '<button class="prow" data-person="' + p.id + '">' +
-        '<b>№' + p.number + ' · ' + esc(p.name) + '</b>' +
+        '<b>№' + p.number + ' · ' + esc(p.name) + ' ' + tagChip(p.tag) + '</b>' +
         '<small>' + (p.telegram ? 'приложение' : '<span class="no">без Telegram</span>') +
         (p.phone ? ' · ' + esc(p.phone) : '') +
         ' · турниров ' + p.games +
@@ -1376,11 +1423,13 @@ async function personCard(p){
   if (!p) return;
   const items = [
     { id:'nick', label:'Изменить ник', cls:'mi' },
+    { id:'tag',  label:'Отметка: ' + (TAG_NAME[p.tag] || 'обычный гость'), cls:'mi' },
     { id:'idok', label: p.id_ok ? 'Снять отметку о документе' : 'Документ проверен, 18+', cls:'mi' },
     { id:'dupes', label:'Двойные профили', cls:'mi' },
     { id:'del', label:'Удалить профиль', cls:'mi danger' }
   ];
   const act = await menu('№' + p.number + ' · ' + p.name,
+    (TAG_NAME[p.tag] ? TAG_NAME[p.tag] + ' · ' : '') +
     (p.telegram ? 'Зарегистрирован в приложении' : 'Заведён кассиром, без Telegram') +
     (p.phone ? ' · ' + p.phone : '') +
     (p.fio ? ' · ' + p.fio : '') +
@@ -1388,6 +1437,11 @@ async function personCard(p){
     (p.money ? ' на ' + fmt(p.money) + ' ₽' : '') +
     (p.id_ok ? ' · документ проверен ' + p.id_ok : ''), items);
 
+  if (act === 'tag'){
+    const r = await tagSheet(p);
+    if (r && r.ok) peopleSheet();
+    return;
+  }
   if (act === 'nick'){
     // Ник у профиля один: правим здесь — меняется и в афише, и в рейтинге,
     // и в уже сыгранных турнирах. Номер игрока и его очки остаются.
