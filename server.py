@@ -104,6 +104,10 @@ DEFAULT_CFG = {
     "chip_points": 10,                     # очки сезона за одну фишку за нокаут
     "seats_per_table": 9,
     "final_at": 9,                         # при скольких игроках финальный стол
+    "close_after_h": 12,                   # через сколько часов после старта сервер
+                                           # закроет турнир сам, если забыли кнопку
+    "quiet_h": 3,                          # после полуночи хватит и столько тишины
+                                           # в кассе, чтобы считать вечер законченным
 
     # Структура турнира: [малый блайнд, большой блайнд, анте] или "перерыв 10".
     # Первые пятнадцать уровней — ребай-период: открыт вход и ребаи.
@@ -470,6 +474,8 @@ def init_db():
         add_column("tournaments", col, decl)
 
     fix_old_tournaments()
+    # Сервер мог простоять выключенным — закрываем всё, что успело протухнуть.
+    close_stale()
     # Приводим несыгранные турниры к клубным условиям: стек и длина уровня у
     # всех одинаковые. Заодно чинит турниры, созданные со снятыми форматами.
     for r in q("SELECT id FROM tournaments WHERE status!='finished'"):
@@ -1260,6 +1266,87 @@ def auto_live():
             notify_start(r["id"])
 
 
+def kassa_quiet(t_id, hours):
+    """Касса молчит столько часов: ни оплат, ни действий администратора.
+
+    Время сравниваем внутри SQLite: там оно в UTC, и свои часы сюда мешать
+    нельзя — разъедется на часовой пояс.
+    """
+    span = f"-{max(1, int(hours))} hours"
+    if q("SELECT 1 FROM purchases WHERE tid=? AND ts > datetime('now', ?) LIMIT 1",
+         (t_id, span), one=True):
+        return False
+    if q("SELECT 1 FROM log WHERE who NOT IN ('сервер') AND ts > datetime('now', ?) LIMIT 1",
+         (span,), one=True):
+        return False
+    return True
+
+
+def close_stale():
+    """Закрывает турниры, которые забыли завершить кнопкой.
+
+    Вечер кончается ночью, и турнир, который «идёт» на следующий день, — это
+    всегда забытая кнопка. Пока он висит открытым, игроки в приложении видят
+    вчерашний турнир идущим, а касса не переходит к сегодняшнему.
+
+    Два условия, любого хватит:
+      · наступил новый день, и касса молчит `quiet_h` часов — значит вечер
+        закончился. Турнир с 19:00 закроется в полночь, если последнее
+        действие было до девяти вечера;
+      · прошло `close_after_h` часов от старта — жёсткий предел на случай,
+        когда кассой пользовались до утра.
+
+    Пока за столом идёт игра и кассир отмечает выбывших, турнир не трогаем.
+    """
+    hours = max(6, int(CFG.get("close_after_h", 12)))
+    quiet_h = max(1, int(CFG.get("quiet_h", 3)))
+    hard = now() - timedelta(hours=hours)
+    today = now().date()
+    done = []
+    for r in q("SELECT * FROM tournaments WHERE status!='finished' ORDER BY start"):
+        dt = parse_dt(r["start"])
+        if not dt:
+            continue
+        if dt > hard and not (dt.date() < today and kassa_quiet(r["id"], quiet_h)):
+            continue
+        came = q("SELECT COUNT(*) AS c FROM entries WHERE tid=? AND arrived=1",
+                 (r["id"],), one=True)["c"]
+        alive = alive_count(r["id"])
+        if not taken(r["id"]) and r["auto"]:
+            # день прошёл, никто не записался — это просто пустая строка
+            # расписания, в «сыгранных» ей делать нечего
+            x("DELETE FROM tournaments WHERE id=?", (r["id"],))
+            continue
+        ok, _ = finish_tournament("сервер", r["id"], force=True)
+        if not ok:
+            continue
+        done.append(r)
+        if came and alive > 1:
+            log("сервер", f"турнир #{r['id']} закрыт сам: не отмечены выбывшие ({alive})")
+            tell_admins(f"<b>{r['title']}</b>, {r['date']} — турнир закрылся сам.\n"
+                        f"Кнопку «Завершить турнир» вчера не нажали, "
+                        f"и {alive} игроков остались неотмеченными: мест у них нет, "
+                        "начислены очки за участие.\n\n"
+                        "Поправить можно в кассе: Ещё → Афиша клуба → этот турнир.")
+        else:
+            log("сервер", f"турнир #{r['id']} закрыт сам (кнопку не нажали)")
+            if came:
+                tell_admins(f"<b>{r['title']}</b>, {r['date']} — турнир закрылся сам, "
+                            "очки начислены. Кнопку «Завершить турнир» нажать забыли.")
+    return done
+
+
+def tell_admins(text):
+    """Короткое сообщение администраторам клуба. Игроков не трогает."""
+    if not CFG.get("bot_token"):
+        return
+    for a in (CFG.get("admins") or []):
+        try:
+            send(a, text)
+        except Exception:
+            pass
+
+
 def notify_start(t_id):
     """Сообщение записавшимся, что турнир начинается."""
     row = t_row(t_id)
@@ -1279,6 +1366,7 @@ def ticker():
     last_backup = 0
     while True:
         try:
+            close_stale()      # вчерашний турнир не должен «идти» сегодня
             auto_live()
             if now().minute % 30 == 0:
                 ensure_events()
@@ -2117,24 +2205,52 @@ def set_test(t_id, on, admin=None):
     return True, f"«{row['title']}» снова идёт в рейтинг"
 
 
-def finish_tournament(admin=None):
-    """Закрывает турнир и начисляет очки рейтинга."""
-    if t_status() == "finished":
+def finish_tournament(admin=None, t_id=None, force=False):
+    """Закрывает турнир и начисляет очки рейтинга.
+
+    force — закрыть, даже если выбывших отметили не всех. Так закрываются
+    забытые турниры: места у неотмеченных не проставляются, им идут очки
+    за участие. Руками кассир так закрыть не может — только сервер под утро.
+    """
+    t_id = int(t_id or tid())
+    if t_status(t_id) == "finished":
         return False, "Турнир уже завершён"
     rest = q("""SELECT * FROM entries WHERE tid=? AND arrived=1 AND busted=0
-                AND COALESCE(house,0)=0""", (tid(),))
-    if len(rest) > 1:
+                AND COALESCE(house,0)=0""", (t_id,))
+    if len(rest) > 1 and not force:
         return False, (f"В игре ещё {len(rest)} {plural(len(rest), 'игрок', 'игрока', 'игроков')}. "
                        "Отметьте выбывших — тот, кто останется последним, получит первое место")
     if len(rest) == 1:
         x("UPDATE entries SET busted=1, place=1 WHERE id=?", (rest[0]["id"],))
-    award_points(tid())
+    # при force неотмеченных не трогаем: мест у них нет, но и «выбыл» ставить
+    # нельзя — иначе турнир не вернуть в работу, если закрылся зря
+    award_points(t_id)
     # записался и не пришёл — незачем хранить в сыгранном турнире
-    x("DELETE FROM entries WHERE tid=? AND (arrived=0 OR COALESCE(house,0)=1)", (tid(),))
-    x("UPDATE tournaments SET status='finished' WHERE id=?", (tid(),))
-    log(admin, f"турнир #{tid()} завершён, очки начислены")
-    setting("pin_tid", "")        # касса сама перейдёт к следующему турниру афиши
+    x("DELETE FROM entries WHERE tid=? AND (arrived=0 OR COALESCE(house,0)=1)", (t_id,))
+    x("UPDATE tournaments SET status='finished' WHERE id=?", (t_id,))
+    log(admin, f"турнир #{t_id} завершён, очки начислены")
+    if (setting("pin_tid") or "") == str(t_id):
+        setting("pin_tid", "")    # касса сама перейдёт к следующему турниру афиши
     return True, "Турнир завершён"
+
+
+def reopen_tournament(t_id, admin=None):
+    """Возвращает сыгранный турнир в работу: вдруг закрылся зря.
+
+    Очки снимаем — их начислят заново при следующем завершении. Места,
+    оплаты и список игроков остаются: это то, что кассир уже отметил.
+    """
+    t_id = int(t_id or 0)
+    row = t_row(t_id)
+    if not row:
+        return False, "Турнир не найден"
+    if row["status"] != "finished":
+        return False, "Этот турнир и так в работе"
+    x("UPDATE tournaments SET status='live' WHERE id=?", (t_id,))
+    x("UPDATE entries SET points=0 WHERE tid=?", (t_id,))
+    setting("pin_tid", str(t_id))     # касса сразу переключается на него
+    log(admin or "admin", f"турнир #{t_id} возвращён в работу")
+    return True, f"«{row['title']}» снова в работе"
 
 
 def achievements(player_id):
@@ -3151,6 +3267,10 @@ class Handler(BaseHTTPRequestHandler):
                 x("INSERT OR IGNORE INTO entries(tid, player_id) VALUES(?,?)", (tid(), pid))
                 log("admin", f"касса завела профиль: {name}")
                 return self.json_out({"ok": True, "message": "Добавлен", "player_id": pid})
+
+            if path == "/api/admin/reopen":
+                ok, msg = reopen_tournament(body.get("tid"), "admin")
+                return self.json_out({"ok": ok, "message": msg})
 
             if path == "/api/admin/tag":
                 ok, msg, tag = set_tag(body.get("player_id"), body.get("tag"), "admin")
